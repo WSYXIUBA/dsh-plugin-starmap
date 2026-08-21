@@ -14,32 +14,8 @@
 
 ## 安装
 
-一条命令搞定（与 DSH 官方插件一致）：
-
-### GitHub 源（当前可用）
-
 ```bash
 dsh plugin --profile desktop add github:WSYXIUBA/dsh-plugin-constellation
-```
-
-> 仓库已包含构建产物（lib/ + client/），无需构建授权，直接安装。
-
-### npm 源（发布后可用）
-
-```bash
-dsh plugin add dsh-plugin-constellation
-```
-
-> 发布 npm 后同样支持插件市场一键安装。
-
-### 已安装用户（本机手动装过）
-
-如果之前在 profile `package.json` 里手动写过 `file:` 依赖，改成：
-
-```bash
-cd ~/.dsh/profiles/desktop
-pnpm remove dsh-plugin-constellation   # 清掉旧的 file: 依赖
-dsh plugin add github:WSYXIUBA/dsh-plugin-constellation
 ```
 
 ## 使用
