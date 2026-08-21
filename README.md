@@ -14,39 +14,39 @@
 
 ## 安装
 
-### 方式一：手动安装（当前）
+一条命令搞定（与 DSH 官方插件一致）：
+
+### GitHub 源（当前可用）
 
 ```bash
-# 1. 构建
-npm install
-npm run build
-
-# 2. 在你的 DSH Desktop profile 中注册（以默认 desktop profile 为例）
-#    ~/.dsh/profiles/desktop/package.json 添加：
-#    "dependencies": {
-#      "dsh-plugin-constellation": "file:<本项目绝对路径>"
-#    },
-#    "dsh.profile.bundles": [..., "dsh-plugin-constellation"]
-
-# 3. 安装
-cd ~/.dsh/profiles/desktop
-pnpm install --no-frozen-lockfile
-
-# 4. 重启 DSH Desktop
+dsh plugin --profile desktop add github:WSYXIUBA/dsh-plugin-constellation
 ```
 
-### 方式二：npm 发布后（规划中）
+> 仓库已包含构建产物（lib/ + client/），无需构建授权，直接安装。
+
+### npm 源（发布后可用）
 
 ```bash
-# 发布到 npm registry 后：
 dsh plugin add dsh-plugin-constellation
+```
+
+> 发布 npm 后同样支持插件市场一键安装。
+
+### 已安装用户（本机手动装过）
+
+如果之前在 profile `package.json` 里手动写过 `file:` 依赖，改成：
+
+```bash
+cd ~/.dsh/profiles/desktop
+pnpm remove dsh-plugin-constellation   # 清掉旧的 file: 依赖
+dsh plugin add github:WSYXIUBA/dsh-plugin-constellation
 ```
 
 ## 使用
 
 1. 打开 DSH Desktop → 设置（侧边栏底部）
 2. 左侧导航点击 **🪐 插件星座图**（在"插件市场"上方）
-3. 全屏/内容区展开星座图：
+3. 展开星座图：
    - 滚轮缩放、拖拽平移
    - 点击节点 → 详情面板（分类 / 版本 / 描述 / 上下游依赖）
    - 搜索框输入 → 高亮定位节点
@@ -58,7 +58,6 @@ dsh plugin add dsh-plugin-constellation
 npm install          # 安装依赖
 npm run typecheck    # 类型检查（host + client）
 npm run build        # 构建 → lib/ + client/client.js
-node deploy.mjs      # （本机专用）同步构建产物到 DSH Desktop profile
 ```
 
 ### 项目结构
@@ -76,7 +75,7 @@ cordis.patch.yml     # 插件 bundle patch
 
 - **host→client 桥**：dshmarket 同款 HTTP 路由模式（`webServer.register` + client `fetch` 相对路径），不依赖 typert remote
 - **数据源**：`ctx.pluginInventory.list()` 提供官方启停状态；node_modules 全量扫描提供依赖边
-- **安装规范**：必须写进 profile `dependencies` + `dsh.profile.bundles`（市场 UI 才能识别/卸载），仅 junction 硬塞市场不认
+- **安装规范**：包声明 `dsh.bundle.patch` 后，`dsh plugin add` 自动加入 profile `dsh.profile.bundles`，市场 UI 可识别/卸载
 
 ## License
 
