@@ -177,7 +177,6 @@ window.__ModuleLoader__.load({
       raf = 0;
       isDark = false;
       transparent = false;
-      stars = [];
       resizeObs = null;
       intersectObs = null;
       menuEl = null;
@@ -283,19 +282,6 @@ window.__ModuleLoader__.load({
           };
         });
         this.computeForceLayout();
-        this.stars = [];
-        for (let i = 0; i < 140; i++) {
-          const h1 = this.hashStr(`star-${i}-x`);
-          const h2 = this.hashStr(`star-${i}-y`);
-          this.stars.push({
-            x: (h1 >>> 8) % 1e4 / 1e4,
-            y: (h2 >>> 8) % 1e4 / 1e4,
-            r: 0.5 + (h1 >>> 4) % 100 / 100 * 1.3,
-            ph: (h2 >>> 2) % 628 / 100,
-            sp: 0.4 + (h1 >>> 6) % 100 / 100 * 1.4,
-            a: 0.25 + (h2 >>> 4) % 100 / 100 * 0.55
-          });
-        }
         this.linksIdx = [];
         this.byNode = /* @__PURE__ */ new Map();
         this.byNodeOut = /* @__PURE__ */ new Map();
@@ -500,9 +486,7 @@ window.__ModuleLoader__.load({
         const time = (typeof performance !== "undefined" ? performance.now() : 0) / 1e3;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, W, H);
-        if (this.transparent) {
-          this.drawStars(ctx, time);
-        } else {
+        if (!this.transparent) {
           ctx.fillStyle = this.isDark ? "#0f0f14" : "#ffffff";
           ctx.fillRect(0, 0, W, H);
         }
@@ -1406,24 +1390,9 @@ window.__ModuleLoader__.load({
         if (this.detailEl && this.state.hoverIndex >= 0) this.showDetail(this.state.hoverIndex);
       }
       /** transparent mode: the canvas stops painting its own background so the
-          modal's color/image layer shows through; a parallax starfield is drawn. */
+          modal's color/image layer shows through clean. */
       setTransparent(v) {
         this.transparent = v;
-      }
-      drawStars(ctx, time) {
-        const { W, H, panX, panY } = this.state;
-        const rgb = this.isDark ? "255,255,255" : "92,104,138";
-        ctx.fillStyle = `rgb(${rgb})`;
-        for (const s of this.stars) {
-          const sx = ((s.x * W + panX * 0.18) % W + W) % W;
-          const sy = ((s.y * H + panY * 0.18) % H + H) % H;
-          const tw = 0.55 + 0.45 * Math.sin(time * s.sp + s.ph);
-          ctx.globalAlpha = s.a * tw;
-          ctx.beginPath();
-          ctx.arc(sx, sy, s.r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.globalAlpha = 1;
       }
       dispose() {
         this.state.running = false;
