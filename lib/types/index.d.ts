@@ -1,8 +1,11 @@
 export declare const name = "dsh-plugin-constellation";
 export declare const inject: string[];
 export type FiberPhase = "pending" | "loading" | "active" | "failed" | "unloading" | null;
+export type RelationType = "deps" | "peer" | "service" | "client" | "profile";
+export type HubKind = "service" | "profile";
 export interface GraphNode {
     id: string;
+    /** short display name (package name, or bare service/profile name for hubs) */
     label: string;
     category: string;
     enabled: boolean;
@@ -18,11 +21,13 @@ export interface GraphNode {
     orphan: boolean;
     repository: string;
     homepage: string;
+    /** hub marker: virtual nodes are not real packages */
+    hub?: HubKind;
 }
 export interface GraphLink {
     source: string;
     target: string;
-    relation: string;
+    relation: RelationType;
 }
 export interface GraphData {
     nodes: GraphNode[];

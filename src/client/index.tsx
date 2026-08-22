@@ -24,7 +24,11 @@ export type GraphKey =
   | "settings.bgImageClear"
   | "settings.bgImageHint"
   | "settings.preview"
-  | "settings.hint";
+  | "settings.hint"
+  | "rel.npm"
+  | "rel.service"
+  | "rel.client"
+  | "rel.profile";
 
 export const zh: Record<GraphKey, string> = {
   "nav.label": "星座图设置",
@@ -50,6 +54,10 @@ export const zh: Record<GraphKey, string> = {
   "settings.bgImageHint": "支持 PNG / JPG / WebP / GIF，≤ 12MB，铺满窗口显示",
   "settings.preview": "预览（棋盘格代表透明）",
   "settings.hint": "设置即时保存，通过侧边栏底部的 🪐 按钮打开星座图查看效果。",
+  "rel.npm": "npm 依赖",
+  "rel.service": "服务注入",
+  "rel.client": "客户端模块",
+  "rel.profile": "Profile",
 };
 
 export const en: Record<GraphKey, string> = {
@@ -76,6 +84,10 @@ export const en: Record<GraphKey, string> = {
   "settings.bgImageHint": "PNG / JPG / WebP / GIF, up to 12MB, cover-fit",
   "settings.preview": "Preview (checkerboard = transparency)",
   "settings.hint": "Saved instantly — open the graph via the 🪐 button at the sidebar foot.",
+  "rel.npm": "npm deps",
+  "rel.service": "Service inject",
+  "rel.client": "Client modules",
+  "rel.profile": "Profile",
 };
 
 /* ── graph data types (mirror host) ── */
@@ -94,6 +106,7 @@ export interface GraphNode {
   orphan?: boolean;
   repository?: string;
   homepage?: string;
+  hub?: "service" | "profile";
 }
 export interface GraphLink {
   source: string;
@@ -110,6 +123,31 @@ export interface GraphData {
 const COL_FAILED = "#ff453a";
 const COL_LOADING = "#ff9f0a";
 const COL_IMPACT = "#ff6482";
+
+/* ── relation-line types (mirrors host RelationType) ── */
+type Relation = "deps" | "peer" | "service" | "client" | "profile";
+type RelationGroup = "deps" | "service" | "client" | "profile";
+
+const RELATION_GROUPS: RelationGroup[] = ["deps", "service", "client", "profile"];
+
+function relationGroup(r: string): RelationGroup {
+  if (r === "service") return "service";
+  if (r === "client") return "client";
+  if (r === "profile") return "profile";
+  return "deps"; // deps + peer
+}
+
+const RELATION_BADGE: Record<string, string> = {
+  deps: "依赖", peer: "peer", service: "服务", client: "客户端", profile: "profile",
+};
+
+/* toolbar chips for relation-type filtering (CSS border styles preview the canvas line style) */
+const RELATION_STYLES: Array<{ group: RelationGroup; key: string; color: string; css: string; hint: string }> = [
+  { group: "deps", key: "rel.npm", color: "#0071e3", css: "solid", hint: "package.json npm 依赖（含 peer）" },
+  { group: "service", key: "rel.service", color: "#4dd0e1", css: "dotted", hint: "Cordis 服务注入 inject=[…]" },
+  { group: "client", key: "rel.client", color: "#af52de", css: "dashed", hint: "dsh.client.inject 客户端模块" },
+  { group: "profile", key: "rel.profile", color: "#9a9aa5", css: "solid", hint: "profile bundle 归属" },
+];
 
 function escapeHtml(s: string): string {
   return String(s ?? "")
@@ -137,6 +175,7 @@ class ConstellationCanvas {
   private catMembers = new Map<string, number[]>();
   private catColor = new Map<string, string>();
   private hiddenCats = new Set<string>();
+  private hiddenRelations = new Set<RelationGroup>();
   private layoutMode: "ring" | "force" = "ring";
   private ringPos = new Map<number, { x: number; y: number }>();
   private forcePos = new Map<number, { x: number; y: number }>();
@@ -161,7 +200,7 @@ class ConstellationCanvas {
   private CATEGORY_COLORS = [
     "#0071e3", "#34c759", "#ff9f0a", "#af52de", "#5856d6",
     "#00c7be", "#ff375f", "#5ac8fa", "#ff6482", "#a2845e", "#8e8e93", "#d4a017",
-    "#30b0c7", "#c2402a", "#7d7aff",
+    "#30b0c7", "#c2402a", "#7d7aff", "#4dd0e1", "#9a9aa5",
   ];
 
   /** one-time stylesheet for hover states (inline handlers are CSP-blocked) */
@@ -272,7 +311,15 @@ class ConstellationCanvas {
       if (ai === undefined || bi === undefined) return;
       const idx = this.linksIdx.length;
       const both = this.data.nodes[ai].enabled && this.data.nodes[bi].enabled;
-      this.linksIdx.push({ a: ai, b: bi, on: both, color: this.prepared[ai].color, relation: link.relation });
+      const group = relationGroup(link.relation);
+      // per-type line color: service lines take the hub's category color,
+      // profile lines stay neutral gray
+      const color = group === "service"
+        ? this.prepared[bi].color
+        : group === "profile"
+          ? "#9a9aa5"
+          : this.prepared[ai].color;
+      this.linksIdx.push({ a: ai, b: bi, on: both, color, relation: link.relation, group });
       if (!this.byNode.has(ai)) this.byNode.set(ai, []);
       if (!this.byNode.has(bi)) this.byNode.set(bi, []);
       this.byNode.get(ai)!.push(idx);
@@ -475,7 +522,8 @@ class ConstellationCanvas {
     // position easing toward layout targets + gentle drift
     const screenX = new Float32Array(prepared.length);
     const screenY = new Float32Array(prepared.length);
-    const visible = new Uint8Array(prepared.length);
+    const visible = new Uint8Array(prepared.length); // on-screen AND not category-hidden
+    const shownCat = new Uint8Array(prepared.length); // not category-hidden (for link culling)
     for (let i = 0; i < prepared.length; i++) {
       const n = prepared[i];
       n.x += (n.tx - n.x) * 0.06;
@@ -486,8 +534,9 @@ class ConstellationCanvas {
       const sy = cy + (n.y + driftY) * zoom;
       screenX[i] = sx;
       screenY[i] = sy;
-      visible[i] = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin
-        && !this.hiddenCats.has(n.node.category) ? 1 : 0;
+      const onScreen = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin ? 1 : 0;
+      shownCat[i] = this.hiddenCats.has(n.node.category) ? 0 : 1;
+      visible[i] = onScreen && shownCat[i];
     }
 
     if (mouseX >= 0 && !s.isDragging) {
@@ -506,8 +555,20 @@ class ConstellationCanvas {
     const hoveredLinks = new Set<number>();
     if (hoverIndex >= 0) {
       const myLinks = this.byNode.get(hoverIndex) || [];
-      for (const li of myLinks) hoveredLinks.add(li);
+      for (const li of myLinks) {
+        if (!this.hiddenRelations.has(this.linksIdx[li].group)) hoveredLinks.add(li);
+      }
     }
+
+    // per-relation-type line style
+    const lineStyle = (link: any): { dash: number[]; width: number; alphaMul: number; flow: boolean } => {
+      switch (link.group) {
+        case "service": return { dash: [2, 5], width: 0.7, alphaMul: 0.9, flow: true };
+        case "client": return { dash: [7, 4], width: 0.55, alphaMul: 0.85, flow: false };
+        case "profile": return { dash: [1, 4], width: 0.4, alphaMul: 0.45, flow: false };
+        default: return { dash: [3, 5], width: 0.6, alphaMul: 1.2, flow: true };
+      }
+    };
 
     // ── links ──
     let linksDrawn = 0;
@@ -516,11 +577,12 @@ class ConstellationCanvas {
         const link = this.linksIdx[li];
         const ax = screenX[link.a], ay = screenY[link.a];
         const bx = screenX[link.b], by = screenY[link.b];
+        const style = lineStyle(link);
         const inImpact = this.impactSet !== null;
         if (link.on) {
           ctx.strokeStyle = inImpact ? COL_IMPACT : link.color;
           ctx.globalAlpha = 0.55;
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = Math.max(style.width, 1.2);
         } else {
           ctx.strokeStyle = this.isDark ? "#3a3a44" : "#c7c7cc";
           ctx.globalAlpha = 0.45;
@@ -534,7 +596,7 @@ class ConstellationCanvas {
         ctx.quadraticCurveTo(midX, midY, bx, by);
         ctx.stroke();
         ctx.setLineDash([]);
-        if (link.on) {
+        if (link.on && style.flow) {
           const fromHovered = link.a === hoverIndex;
           const raw = (time * 0.22 + (li % 13) / 13) % 1;
           const u = fromHovered ? raw : 1 - raw;
@@ -557,11 +619,14 @@ class ConstellationCanvas {
       const shimmer = 1 + 0.18 * Math.sin(time * 0.6);
       const baseAlpha = (0.30 + Math.min(zoom * 0.08, 0.22)) * shimmer;
       for (const link of this.linksIdx) {
+        // relation-type filter + category-hidden endpoints cull the line
+        if (this.hiddenRelations.has(link.group)) continue;
+        if (!shownCat[link.a] || !shownCat[link.b]) continue;
         const ax = screenX[link.a], ay = screenY[link.a];
         const bx = screenX[link.b], by = screenY[link.b];
-        if (!visible[link.a] && !visible[link.b]) continue;
         if ((ax < -margin && bx < -margin) || (ax > W + margin && bx > W + margin) ||
             (ay < -margin && by < -margin) || (ay > H + margin && by > H + margin)) continue;
+        const style = lineStyle(link);
         const impactLink = this.impactSet !== null && this.impactSet.has(link.a) && this.impactSet.has(link.b);
         if (impactLink) {
           ctx.strokeStyle = COL_IMPACT;
@@ -570,14 +635,14 @@ class ConstellationCanvas {
           ctx.setLineDash([]);
         } else if (link.on) {
           ctx.strokeStyle = link.color;
-          ctx.globalAlpha = this.impactSet !== null ? baseAlpha * 0.4 : baseAlpha * 1.2;
-          ctx.lineWidth = 0.6;
-          ctx.setLineDash([3, 5]);
+          ctx.globalAlpha = this.impactSet !== null ? baseAlpha * 0.4 : baseAlpha * style.alphaMul;
+          ctx.lineWidth = style.width;
+          ctx.setLineDash(style.dash);
           ctx.lineDashOffset = -time * 14;
         } else {
           ctx.strokeStyle = this.isDark ? "#3a3a44" : "#c7c7cc";
           ctx.globalAlpha = baseAlpha * 0.8;
-          ctx.lineWidth = 0.4;
+          ctx.lineWidth = Math.max(style.width * 0.7, 0.4);
           ctx.setLineDash([3, 4]);
         }
         const midX = (ax + bx) / 2 + (by - ay) * 0.08;
@@ -762,7 +827,8 @@ class ConstellationCanvas {
       ctx.globalAlpha = 1;
 
       // labels
-      const text = n.node.id.length > 18 ? n.node.id.substring(0, 17) + "…" : n.node.id;
+      const display = n.node.label || n.node.id;
+      const text = display.length > 18 ? display.substring(0, 17) + "…" : display;
       ctx.font = '11px -apple-system, "PingFang SC", sans-serif';
       if (isHovered) {
         ctx.fillStyle = this.isDark ? "#e4e4e7" : "#18181b";
@@ -792,7 +858,10 @@ class ConstellationCanvas {
     ctx.fillStyle = this.isDark ? "#707078" : "#a1a1a6";
     ctx.textAlign = "left";
     ctx.fillText(`滚动缩放 · 拖拽平移 · 双击聚焦 · 点击详情 · 右键菜单`, 12, 16);
-    ctx.fillText(`缩放 ${zoom.toFixed(2)}x · 可见 ${visibleCount} 节点 · 边 ${linksDrawn}${this.impactSet ? ` · 影响分析 ${this.impactSet.size} 节点` : ""}`, 12, H - 12);
+    ctx.font = '10px "SF Mono", "Fira Code", Consolas, monospace';
+    ctx.fillText(`关系线: npm 实线 · 服务 点线 · 客户端 虚线 · Profile 灰线`, 12, H - 28);
+    ctx.font = '11px "SF Mono", "Fira Code", Consolas, monospace';
+    ctx.fillText(`缩放 ${zoom.toFixed(2)}x · 可见 ${visibleCount} 节点 · 关系线 ${linksDrawn}${this.impactSet ? ` · 影响分析 ${this.impactSet.size} 节点` : ""}`, 12, H - 12);
 
     // heat legend
     ctx.textAlign = "left";
@@ -965,7 +1034,8 @@ class ConstellationCanvas {
     this.searchMatches = [];
     for (let i = 0; i < this.prepared.length; i++) {
       const n = this.data.nodes[i];
-      if (n.id.toLowerCase().includes(q) || n.category.toLowerCase().includes(q) || (n.desc || "").toLowerCase().includes(q)) {
+      const hay = `${n.id} ${n.label || ""} ${n.category} ${n.desc || ""}`.toLowerCase();
+      if (hay.includes(q)) {
         this.searchMatches.push(i);
       }
     }
@@ -994,6 +1064,16 @@ class ConstellationCanvas {
 
   isCategoryHidden(cat: string): boolean { return this.hiddenCats.has(cat); }
 
+  /* ── relation-type visibility ── */
+  setRelationHidden(group: RelationGroup, hidden: boolean) {
+    if (hidden) this.hiddenRelations.add(group);
+    else this.hiddenRelations.delete(group);
+  }
+
+  isRelationHidden(group: RelationGroup): boolean { return this.hiddenRelations.has(group); }
+
+  getRelationGroups(): RelationGroup[] { return [...RELATION_GROUPS]; }
+
   getCategories(): Array<{ name: string; color: string; count: number }> {
     return this.catList.map((c) => ({
       name: c,
@@ -1002,15 +1082,19 @@ class ConstellationCanvas {
     }));
   }
 
-  /* ── uninstall impact analysis: transitive dependents of a node ── */
+  /* ── uninstall impact analysis: transitive dependents of a node ──
+   * Only npm-dep and client-module lines propagate (they represent real
+   * "removing this package breaks the source" relations). Service/profile
+   * lines point at hubs and carry no uninstall semantics. */
   computeImpact(idx: number): number[] {
-    // reverse adjacency: who depends on me (directly or transitively)
     const affected = new Set<number>([idx]);
     const queue = [idx];
     while (queue.length > 0) {
       const cur = queue.pop()!;
       for (const li of this.byNodeIn.get(cur) || []) {
-        const src = this.linksIdx[li].a;
+        const link = this.linksIdx[li];
+        if (link.group !== "deps" && link.group !== "client") continue;
+        const src = link.a;
         if (!affected.has(src)) { affected.add(src); queue.push(src); }
       }
     }
@@ -1046,7 +1130,8 @@ class ConstellationCanvas {
         const other = link.a === idx ? this.data.nodes[link.b] : this.data.nodes[link.a];
         if (!other) return "";
         const on = other.enabled && node.enabled;
-        return `<span style="display:inline-flex;align-items:center;gap:4px;margin:1px 4px 1px 0;background:rgba(0,0,0,0.04);border-radius:5px;padding:1px 6px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};display:inline-block;"></span>${escapeHtml(other.id)}<span style="color:#a1a1a6;">${on ? "实" : "虚"}</span></span>`;
+        const otherName = other.label || other.id;
+        return `<span style="display:inline-flex;align-items:center;gap:4px;margin:1px 4px 1px 0;background:rgba(0,0,0,0.04);border-radius:5px;padding:1px 6px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};display:inline-block;"></span>${escapeHtml(otherName)}<span style="color:#a1a1a6;">${escapeHtml(RELATION_BADGE[link.relation] || link.relation)}</span></span>`;
       }).join("");
       const phaseBadge = node.phase === "failed"
         ? `<span style="color:${COL_FAILED};font-weight:700;"> · 加载失败</span>`
@@ -1055,7 +1140,7 @@ class ConstellationCanvas {
           : "";
       const orphanBadge = node.orphan ? `<span style="color:#8e8e93;"> · 未被引用</span>` : "";
       tip.innerHTML = `
-        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${node.enabled ? "●" : "○"} ${escapeHtml(node.id)}</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${node.enabled ? "●" : "○"} ${escapeHtml(node.hub ? node.label : node.id)}</div>
         <div style="color:#6e6e73;margin-bottom:5px;">${escapeHtml(node.category)} · ${n.linkCount} 连接 · ${node.enabled ? "启用" : "禁用"}${phaseBadge}${orphanBadge}</div>
         <div style="color:#a1a1a6;line-height:1.5;font-size:11.5px;">${escapeHtml(node.desc || "")}</div>
         <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(0,0,0,0.06);color:#6e6e73;font-size:11px;line-height:1.7;">${rels || "无连接"}</div>`;
@@ -1079,12 +1164,14 @@ class ConstellationCanvas {
     const outLinks = (this.byNodeOut.get(idx) || []).map((li) => this.linksIdx[li]);
     const inLinks = (this.byNodeIn.get(idx) || []).map((li) => this.linksIdx[li]);
     const relRow = (link: any, arrow: string) => {
-      const otherId = arrow === "→" ? this.data.nodes[link.b]?.id : this.data.nodes[link.a]?.id;
-      if (!otherId) return "";
       const otherNode = arrow === "→" ? this.data.nodes[link.b] : this.data.nodes[link.a];
-      const on = otherNode ? otherNode.enabled && node.enabled : false;
-      return `<div data-nav="${escapeHtml(otherId)}" style="padding:3px 7px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};display:flex;align-items:center;gap:5px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};flex-shrink:0;"></span><span>${arrow} ${escapeHtml(otherId)}</span><span style="font-size:9px;color:#a1a1a6;background:rgba(0,0,0,0.05);border-radius:4px;padding:1px 5px;margin-left:auto;">${escapeHtml(link.relation)}</span></div>`;
+      if (!otherNode) return "";
+      const otherName = otherNode.label || otherNode.id;
+      const on = otherNode.enabled && node.enabled;
+      const badge = RELATION_BADGE[link.relation] || link.relation;
+      return `<div data-nav="${escapeHtml(otherNode.id)}" style="padding:3px 7px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};display:flex;align-items:center;gap:5px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};flex-shrink:0;"></span><span>${arrow} ${escapeHtml(otherName)}</span><span style="font-size:9px;color:#a1a1a6;background:rgba(0,0,0,0.05);border-radius:4px;padding:1px 5px;margin-left:auto;">${escapeHtml(badge)}</span></div>`;
     };
+    const isHub = node.hub === "service" || node.hub === "profile";
     const phasePill = node.phase === "failed"
       ? `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(255,69,58,0.12);color:${COL_FAILED};">加载失败</span>`
       : (node.phase === "loading" || node.phase === "pending")
@@ -1100,11 +1187,11 @@ class ConstellationCanvas {
     const impactActive = this.impactRoot === idx;
     el.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
-        <div style="font-size:14px;font-weight:700;word-break:break-all;">${node.enabled ? "●" : "○"} ${escapeHtml(node.id)}</div>
+        <div style="font-size:14px;font-weight:700;word-break:break-all;">${node.hub === "service" ? "⚙" : node.hub === "profile" ? "●" : node.enabled ? "●" : "○"} ${escapeHtml(isHub ? node.label : node.id)}</div>
         <button class="dshpg-close" style="background:none;border:none;font-size:17px;color:#a1a1a6;cursor:pointer;padding:2px 4px;">×</button>
       </div>
       <div style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:5px;">
-        <span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:${node.enabled ? "rgba(52,199,89,0.12)" : "rgba(255,59,48,0.1)"};color:${node.enabled ? "#248a3d" : "#d70015"};">${node.enabled ? "启用" : "禁用"}</span>
+        ${isHub ? "" : `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:${node.enabled ? "rgba(52,199,89,0.12)" : "rgba(255,59,48,0.1)"};color:${node.enabled ? "#248a3d" : "#d70015"};">${node.enabled ? "启用" : "禁用"}</span>`}
         <span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(0,0,0,0.05);color:#6e6e73;">${escapeHtml(node.category)}</span>
         ${phasePill}${orphanPill}
       </div>
@@ -1117,11 +1204,11 @@ class ConstellationCanvas {
           <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${outLinks.length}</div><div style="font-size:9.5px;color:#a1a1a6;">出度</div></div>
           <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${n.linkCount}</div><div style="font-size:9.5px;color:#a1a1a6;">总连接</div></div>
         </div></div>
-      <div style="margin-bottom:12px;"><button class="dshpg-impact" style="width:100%;padding:7px 10px;border-radius:9px;border:1px solid ${impactActive ? COL_IMPACT : (this.isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)")};background:${impactActive ? "rgba(255,100,130,0.12)" : "transparent"};color:${impactActive ? COL_IMPACT : (this.isDark ? "#e4e4e7" : "#333")};font-size:11.5px;font-weight:600;cursor:pointer;">${impactActive ? "清除影响分析" : "卸载影响分析"}</button>
-        <div class="dshpg-impact-result" style="margin-top:8px;"></div></div>
-      ${outLinks.length ? `<div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">依赖下游 (${outLinks.length})</div>
+      ${isHub ? "" : `<div style="margin-bottom:12px;"><button class="dshpg-impact" style="width:100%;padding:7px 10px;border-radius:9px;border:1px solid ${impactActive ? COL_IMPACT : (this.isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)")};background:${impactActive ? "rgba(255,100,130,0.12)" : "transparent"};color:${impactActive ? COL_IMPACT : (this.isDark ? "#e4e4e7" : "#333")};font-size:11.5px;font-weight:600;cursor:pointer;">${impactActive ? "清除影响分析" : "卸载影响分析"}</button>
+        <div class="dshpg-impact-result" style="margin-top:8px;"></div></div>`}
+      ${outLinks.length ? `<div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">下游关系 (${outLinks.length})</div>
         ${outLinks.map((l: any) => relRow(l, "→")).join("")}</div>` : ""}
-      ${inLinks.length ? `<div><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">被依赖 (${inLinks.length})</div>
+      ${inLinks.length ? `<div><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">上游关系 (${inLinks.length})</div>
         ${inLinks.map((l: any) => relRow(l, "←")).join("")}</div>` : ""}`;
     this.wrapper.appendChild(el);
     this.detailEl = el;
@@ -1164,9 +1251,12 @@ class ConstellationCanvas {
     const el = document.createElement("div");
     el.style.cssText = `position:absolute;left:${Math.min(mx, this.state.W - 190)}px;top:${Math.min(my, this.state.H - 160)}px;background:${this.isDark ? "rgba(28,28,34,0.97)" : "rgba(255,255,255,0.97)"};border:1px solid ${this.isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"};border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,0.18);padding:5px;z-index:11;font-size:12px;min-width:150px;`;
     const item = (text: string) => `<div class="dshpg-menu-item" style="padding:6px 12px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#e4e4e7" : "#333"};">${escapeHtml(text)}</div>`;
-    let html = item("🎯 聚焦此节点") + item("📋 复制包名");
-    if (node.repository || node.homepage) html += item("🔗 打开仓库主页");
-    html += item("📦 打开 npm 页面") + item("🧩 卸载影响分析");
+    const isHub = node.hub === "service" || node.hub === "profile";
+    let html = item("🎯 聚焦此节点") + item(isHub ? "📋 复制名称" : "📋 复制包名");
+    if (!isHub) {
+      if (node.repository || node.homepage) html += item("🔗 打开仓库主页");
+      html += item("📦 打开 npm 页面") + item("🧩 卸载影响分析");
+    }
     el.innerHTML = html;
     this.wrapper.appendChild(el);
     this.menuEl = el;
@@ -1176,17 +1266,19 @@ class ConstellationCanvas {
       if (navigator.clipboard) navigator.clipboard.writeText(node.id).catch(() => {});
       this.hideMenu();
     });
-    if (node.repository || node.homepage) {
-      items.item(2)?.addEventListener("click", () => {
-        const url = this.normalizeUrl(node.repository || node.homepage || "");
-        if (url) window.open(url, "_blank", "noopener");
-        this.hideMenu();
-      });
-      items.item(3)?.addEventListener("click", () => { window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener"); this.hideMenu(); });
-      items.item(4)?.addEventListener("click", () => { this.setImpact(idx); this.showDetail(idx); this.hideMenu(); });
-    } else {
-      items.item(2)?.addEventListener("click", () => { window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener"); this.hideMenu(); });
-      items.item(3)?.addEventListener("click", () => { this.setImpact(idx); this.showDetail(idx); this.hideMenu(); });
+    if (!isHub) {
+      if (node.repository || node.homepage) {
+        items.item(2)?.addEventListener("click", () => {
+          const url = this.normalizeUrl(node.repository || node.homepage || "");
+          if (url) window.open(url, "_blank", "noopener");
+          this.hideMenu();
+        });
+        items.item(3)?.addEventListener("click", () => { window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener"); this.hideMenu(); });
+        items.item(4)?.addEventListener("click", () => { this.setImpact(idx); this.showDetail(idx); this.hideMenu(); });
+      } else {
+        items.item(2)?.addEventListener("click", () => { window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener"); this.hideMenu(); });
+        items.item(3)?.addEventListener("click", () => { this.setImpact(idx); this.showDetail(idx); this.hideMenu(); });
+      }
     }
     const close = (e: MouseEvent) => {
       if (!el.contains(e.target as Node)) { this.hideMenu(); document.removeEventListener("mousedown", close, true); }
@@ -1460,6 +1552,7 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
   const [searchInfo, setSearchInfo] = React.useState({ count: 0, active: 0 });
   const [layout, setLayout] = React.useState<"ring" | "force">("ring");
   const [cats, setCats] = React.useState<Array<{ name: string; color: string; count: number; hidden: boolean }>>([]);
+  const [relHidden, setRelHidden] = React.useState<Record<string, boolean>>({});
   const [updatedAt, setUpdatedAt] = React.useState<string>("");
 
   const fetchGraph = React.useCallback((force = false) => {
@@ -1581,7 +1674,7 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
       "div",
       { style: { padding: "10px 18px 6px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flexShrink: 0 } },
       React.createElement("span", { style: { fontWeight: 700, fontSize: 15, color: isDark ? "#f0f0f2" : "#1d1d1f" } }, t("overlay.title")),
-      React.createElement("span", { style: { fontSize: 11, color: isDark ? "#707078" : "#a1a1a6" } }, `${data.nodes.length} 插件 · ${data.links.length} 依赖${updatedAt ? ` · ${updatedAt}` : ""}`),
+      React.createElement("span", { style: { fontSize: 11, color: isDark ? "#707078" : "#a1a1a6" } }, `${data.nodes.length} 节点 · ${data.links.length} 关系线${updatedAt ? ` · ${updatedAt}` : ""}`),
       React.createElement("input", {
         value: searchQuery,
         placeholder: t("search.placeholder"),
@@ -1666,6 +1759,32 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
         },
         React.createElement("span", { style: { width: 7, height: 7, borderRadius: "50%", background: c.color, opacity: c.hidden ? 0.35 : 1 } }),
         `${c.name} ${c.count}`,
+      )),
+      // relation-type filter chips (line-style preview via borderTop)
+      React.createElement("span", { style: { width: 1, height: 14, background: isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)", margin: "0 2px", flexShrink: 0 } }),
+      RELATION_STYLES.map((rs) => React.createElement(
+        "button",
+        {
+          key: `rel-${rs.group}`,
+          title: rs.hint,
+          onClick: () => {
+            const eng = engineRef.current;
+            if (!eng) return;
+            const hidden = !eng.isRelationHidden(rs.group);
+            eng.setRelationHidden(rs.group, hidden);
+            setRelHidden((prev) => ({ ...prev, [rs.group]: hidden }));
+          },
+          style: {
+            display: "inline-flex", alignItems: "center", gap: 5,
+            padding: "2px 8px", fontSize: 10.5, borderRadius: 999, cursor: "pointer",
+            border: `1px solid ${relHidden[rs.group] ? "transparent" : rs.color + "55"}`,
+            background: relHidden[rs.group] ? "transparent" : rs.color + "12",
+            color: relHidden[rs.group] ? (isDark ? "#707078" : "#a1a1a6") : (isDark ? "#e4e4e7" : "#1d1d1f"),
+            textDecoration: relHidden[rs.group] ? "line-through" : "none",
+          },
+        },
+        React.createElement("span", { style: { width: 14, height: 0, borderTop: `2px ${rs.css} ${rs.color}`, opacity: relHidden[rs.group] ? 0.35 : 1 } }),
+        t(rs.key as GraphKey),
       )),
     ),
     React.createElement("div", {

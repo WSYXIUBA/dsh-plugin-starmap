@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-constellation",
   "description": "DSH 插件星座图 — 侧边栏/设置入口打开依赖关系图，自动分类 + 真实依赖关系网 · Plugin constellation graph for DeepSeek Harness",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

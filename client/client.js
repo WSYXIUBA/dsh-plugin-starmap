@@ -67,7 +67,11 @@ window.__ModuleLoader__.load({
       "settings.bgImageClear": "\u6E05\u9664\u56FE\u7247",
       "settings.bgImageHint": "\u652F\u6301 PNG / JPG / WebP / GIF\uFF0C\u2264 12MB\uFF0C\u94FA\u6EE1\u7A97\u53E3\u663E\u793A",
       "settings.preview": "\u9884\u89C8\uFF08\u68CB\u76D8\u683C\u4EE3\u8868\u900F\u660E\uFF09",
-      "settings.hint": "\u8BBE\u7F6E\u5373\u65F6\u4FDD\u5B58\uFF0C\u901A\u8FC7\u4FA7\u8FB9\u680F\u5E95\u90E8\u7684 \u{1FA90} \u6309\u94AE\u6253\u5F00\u661F\u5EA7\u56FE\u67E5\u770B\u6548\u679C\u3002"
+      "settings.hint": "\u8BBE\u7F6E\u5373\u65F6\u4FDD\u5B58\uFF0C\u901A\u8FC7\u4FA7\u8FB9\u680F\u5E95\u90E8\u7684 \u{1FA90} \u6309\u94AE\u6253\u5F00\u661F\u5EA7\u56FE\u67E5\u770B\u6548\u679C\u3002",
+      "rel.npm": "npm \u4F9D\u8D56",
+      "rel.service": "\u670D\u52A1\u6CE8\u5165",
+      "rel.client": "\u5BA2\u6237\u7AEF\u6A21\u5757",
+      "rel.profile": "Profile"
     };
     var en = {
       "nav.label": "Constellation Settings",
@@ -92,11 +96,35 @@ window.__ModuleLoader__.load({
       "settings.bgImageClear": "Clear image",
       "settings.bgImageHint": "PNG / JPG / WebP / GIF, up to 12MB, cover-fit",
       "settings.preview": "Preview (checkerboard = transparency)",
-      "settings.hint": "Saved instantly \u2014 open the graph via the \u{1FA90} button at the sidebar foot."
+      "settings.hint": "Saved instantly \u2014 open the graph via the \u{1FA90} button at the sidebar foot.",
+      "rel.npm": "npm deps",
+      "rel.service": "Service inject",
+      "rel.client": "Client modules",
+      "rel.profile": "Profile"
     };
     var COL_FAILED = "#ff453a";
     var COL_LOADING = "#ff9f0a";
     var COL_IMPACT = "#ff6482";
+    var RELATION_GROUPS = ["deps", "service", "client", "profile"];
+    function relationGroup(r) {
+      if (r === "service") return "service";
+      if (r === "client") return "client";
+      if (r === "profile") return "profile";
+      return "deps";
+    }
+    var RELATION_BADGE = {
+      deps: "\u4F9D\u8D56",
+      peer: "peer",
+      service: "\u670D\u52A1",
+      client: "\u5BA2\u6237\u7AEF",
+      profile: "profile"
+    };
+    var RELATION_STYLES = [
+      { group: "deps", key: "rel.npm", color: "#0071e3", css: "solid", hint: "package.json npm \u4F9D\u8D56\uFF08\u542B peer\uFF09" },
+      { group: "service", key: "rel.service", color: "#4dd0e1", css: "dotted", hint: "Cordis \u670D\u52A1\u6CE8\u5165 inject=[\u2026]" },
+      { group: "client", key: "rel.client", color: "#af52de", css: "dashed", hint: "dsh.client.inject \u5BA2\u6237\u7AEF\u6A21\u5757" },
+      { group: "profile", key: "rel.profile", color: "#9a9aa5", css: "solid", hint: "profile bundle \u5F52\u5C5E" }
+    ];
     function escapeHtml(s) {
       return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     }
@@ -116,6 +144,7 @@ window.__ModuleLoader__.load({
       catMembers = /* @__PURE__ */ new Map();
       catColor = /* @__PURE__ */ new Map();
       hiddenCats = /* @__PURE__ */ new Set();
+      hiddenRelations = /* @__PURE__ */ new Set();
       layoutMode = "ring";
       ringPos = /* @__PURE__ */ new Map();
       forcePos = /* @__PURE__ */ new Map();
@@ -167,7 +196,9 @@ window.__ModuleLoader__.load({
         "#d4a017",
         "#30b0c7",
         "#c2402a",
-        "#7d7aff"
+        "#7d7aff",
+        "#4dd0e1",
+        "#9a9aa5"
       ];
       /** one-time stylesheet for hover states (inline handlers are CSP-blocked) */
       ensureStyles() {
@@ -275,7 +306,9 @@ window.__ModuleLoader__.load({
           if (ai === void 0 || bi === void 0) return;
           const idx = this.linksIdx.length;
           const both = this.data.nodes[ai].enabled && this.data.nodes[bi].enabled;
-          this.linksIdx.push({ a: ai, b: bi, on: both, color: this.prepared[ai].color, relation: link.relation });
+          const group = relationGroup(link.relation);
+          const color = group === "service" ? this.prepared[bi].color : group === "profile" ? "#9a9aa5" : this.prepared[ai].color;
+          this.linksIdx.push({ a: ai, b: bi, on: both, color, relation: link.relation, group });
           if (!this.byNode.has(ai)) this.byNode.set(ai, []);
           if (!this.byNode.has(bi)) this.byNode.set(bi, []);
           this.byNode.get(ai).push(idx);
@@ -477,6 +510,7 @@ window.__ModuleLoader__.load({
         const screenX = new Float32Array(prepared.length);
         const screenY = new Float32Array(prepared.length);
         const visible = new Uint8Array(prepared.length);
+        const shownCat = new Uint8Array(prepared.length);
         for (let i = 0; i < prepared.length; i++) {
           const n = prepared[i];
           n.x += (n.tx - n.x) * 0.06;
@@ -487,7 +521,9 @@ window.__ModuleLoader__.load({
           const sy = cy + (n.y + driftY) * zoom;
           screenX[i] = sx;
           screenY[i] = sy;
-          visible[i] = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin && !this.hiddenCats.has(n.node.category) ? 1 : 0;
+          const onScreen = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin ? 1 : 0;
+          shownCat[i] = this.hiddenCats.has(n.node.category) ? 0 : 1;
+          visible[i] = onScreen && shownCat[i];
         }
         if (mouseX >= 0 && !s.isDragging) {
           let bestDist = zoom > 1.5 ? 80 : 30;
@@ -507,19 +543,34 @@ window.__ModuleLoader__.load({
         const hoveredLinks = /* @__PURE__ */ new Set();
         if (hoverIndex >= 0) {
           const myLinks = this.byNode.get(hoverIndex) || [];
-          for (const li of myLinks) hoveredLinks.add(li);
+          for (const li of myLinks) {
+            if (!this.hiddenRelations.has(this.linksIdx[li].group)) hoveredLinks.add(li);
+          }
         }
+        const lineStyle = (link) => {
+          switch (link.group) {
+            case "service":
+              return { dash: [2, 5], width: 0.7, alphaMul: 0.9, flow: true };
+            case "client":
+              return { dash: [7, 4], width: 0.55, alphaMul: 0.85, flow: false };
+            case "profile":
+              return { dash: [1, 4], width: 0.4, alphaMul: 0.45, flow: false };
+            default:
+              return { dash: [3, 5], width: 0.6, alphaMul: 1.2, flow: true };
+          }
+        };
         let linksDrawn = 0;
         if (hoverIndex >= 0) {
           for (const li of hoveredLinks) {
             const link = this.linksIdx[li];
             const ax = screenX[link.a], ay = screenY[link.a];
             const bx = screenX[link.b], by = screenY[link.b];
+            const style = lineStyle(link);
             const inImpact = this.impactSet !== null;
             if (link.on) {
               ctx.strokeStyle = inImpact ? COL_IMPACT : link.color;
               ctx.globalAlpha = 0.55;
-              ctx.lineWidth = 1.5;
+              ctx.lineWidth = Math.max(style.width, 1.2);
             } else {
               ctx.strokeStyle = this.isDark ? "#3a3a44" : "#c7c7cc";
               ctx.globalAlpha = 0.45;
@@ -533,7 +584,7 @@ window.__ModuleLoader__.load({
             ctx.quadraticCurveTo(midX, midY, bx, by);
             ctx.stroke();
             ctx.setLineDash([]);
-            if (link.on) {
+            if (link.on && style.flow) {
               const fromHovered = link.a === hoverIndex;
               const raw = (time * 0.22 + li % 13 / 13) % 1;
               const u = fromHovered ? raw : 1 - raw;
@@ -556,10 +607,12 @@ window.__ModuleLoader__.load({
           const shimmer = 1 + 0.18 * Math.sin(time * 0.6);
           const baseAlpha = (0.3 + Math.min(zoom * 0.08, 0.22)) * shimmer;
           for (const link of this.linksIdx) {
+            if (this.hiddenRelations.has(link.group)) continue;
+            if (!shownCat[link.a] || !shownCat[link.b]) continue;
             const ax = screenX[link.a], ay = screenY[link.a];
             const bx = screenX[link.b], by = screenY[link.b];
-            if (!visible[link.a] && !visible[link.b]) continue;
             if (ax < -margin && bx < -margin || ax > W + margin && bx > W + margin || ay < -margin && by < -margin || ay > H + margin && by > H + margin) continue;
+            const style = lineStyle(link);
             const impactLink = this.impactSet !== null && this.impactSet.has(link.a) && this.impactSet.has(link.b);
             if (impactLink) {
               ctx.strokeStyle = COL_IMPACT;
@@ -568,14 +621,14 @@ window.__ModuleLoader__.load({
               ctx.setLineDash([]);
             } else if (link.on) {
               ctx.strokeStyle = link.color;
-              ctx.globalAlpha = this.impactSet !== null ? baseAlpha * 0.4 : baseAlpha * 1.2;
-              ctx.lineWidth = 0.6;
-              ctx.setLineDash([3, 5]);
+              ctx.globalAlpha = this.impactSet !== null ? baseAlpha * 0.4 : baseAlpha * style.alphaMul;
+              ctx.lineWidth = style.width;
+              ctx.setLineDash(style.dash);
               ctx.lineDashOffset = -time * 14;
             } else {
               ctx.strokeStyle = this.isDark ? "#3a3a44" : "#c7c7cc";
               ctx.globalAlpha = baseAlpha * 0.8;
-              ctx.lineWidth = 0.4;
+              ctx.lineWidth = Math.max(style.width * 0.7, 0.4);
               ctx.setLineDash([3, 4]);
             }
             const midX = (ax + bx) / 2 + (by - ay) * 0.08;
@@ -750,7 +803,8 @@ window.__ModuleLoader__.load({
           }
           ctx.shadowBlur = 0;
           ctx.globalAlpha = 1;
-          const text = n.node.id.length > 18 ? n.node.id.substring(0, 17) + "\u2026" : n.node.id;
+          const display = n.node.label || n.node.id;
+          const text = display.length > 18 ? display.substring(0, 17) + "\u2026" : display;
           ctx.font = '11px -apple-system, "PingFang SC", sans-serif';
           if (isHovered) {
             ctx.fillStyle = this.isDark ? "#e4e4e7" : "#18181b";
@@ -778,7 +832,10 @@ window.__ModuleLoader__.load({
         ctx.fillStyle = this.isDark ? "#707078" : "#a1a1a6";
         ctx.textAlign = "left";
         ctx.fillText(`\u6EDA\u52A8\u7F29\u653E \xB7 \u62D6\u62FD\u5E73\u79FB \xB7 \u53CC\u51FB\u805A\u7126 \xB7 \u70B9\u51FB\u8BE6\u60C5 \xB7 \u53F3\u952E\u83DC\u5355`, 12, 16);
-        ctx.fillText(`\u7F29\u653E ${zoom.toFixed(2)}x \xB7 \u53EF\u89C1 ${visibleCount} \u8282\u70B9 \xB7 \u8FB9 ${linksDrawn}${this.impactSet ? ` \xB7 \u5F71\u54CD\u5206\u6790 ${this.impactSet.size} \u8282\u70B9` : ""}`, 12, H - 12);
+        ctx.font = '10px "SF Mono", "Fira Code", Consolas, monospace';
+        ctx.fillText(`\u5173\u7CFB\u7EBF: npm \u5B9E\u7EBF \xB7 \u670D\u52A1 \u70B9\u7EBF \xB7 \u5BA2\u6237\u7AEF \u865A\u7EBF \xB7 Profile \u7070\u7EBF`, 12, H - 28);
+        ctx.font = '11px "SF Mono", "Fira Code", Consolas, monospace';
+        ctx.fillText(`\u7F29\u653E ${zoom.toFixed(2)}x \xB7 \u53EF\u89C1 ${visibleCount} \u8282\u70B9 \xB7 \u5173\u7CFB\u7EBF ${linksDrawn}${this.impactSet ? ` \xB7 \u5F71\u54CD\u5206\u6790 ${this.impactSet.size} \u8282\u70B9` : ""}`, 12, H - 12);
         ctx.textAlign = "left";
         ctx.font = "600 10px -apple-system, sans-serif";
         ctx.fillStyle = this.isDark ? "#a8a8b0" : "#8e8e93";
@@ -948,7 +1005,8 @@ window.__ModuleLoader__.load({
         this.searchMatches = [];
         for (let i = 0; i < this.prepared.length; i++) {
           const n = this.data.nodes[i];
-          if (n.id.toLowerCase().includes(q) || n.category.toLowerCase().includes(q) || (n.desc || "").toLowerCase().includes(q)) {
+          const hay = `${n.id} ${n.label || ""} ${n.category} ${n.desc || ""}`.toLowerCase();
+          if (hay.includes(q)) {
             this.searchMatches.push(i);
           }
         }
@@ -974,6 +1032,17 @@ window.__ModuleLoader__.load({
       isCategoryHidden(cat) {
         return this.hiddenCats.has(cat);
       }
+      /* ── relation-type visibility ── */
+      setRelationHidden(group, hidden) {
+        if (hidden) this.hiddenRelations.add(group);
+        else this.hiddenRelations.delete(group);
+      }
+      isRelationHidden(group) {
+        return this.hiddenRelations.has(group);
+      }
+      getRelationGroups() {
+        return [...RELATION_GROUPS];
+      }
       getCategories() {
         return this.catList.map((c) => ({
           name: c,
@@ -981,14 +1050,19 @@ window.__ModuleLoader__.load({
           count: (this.catMembers.get(c) || []).length
         }));
       }
-      /* ── uninstall impact analysis: transitive dependents of a node ── */
+      /* ── uninstall impact analysis: transitive dependents of a node ──
+       * Only npm-dep and client-module lines propagate (they represent real
+       * "removing this package breaks the source" relations). Service/profile
+       * lines point at hubs and carry no uninstall semantics. */
       computeImpact(idx) {
         const affected = /* @__PURE__ */ new Set([idx]);
         const queue = [idx];
         while (queue.length > 0) {
           const cur = queue.pop();
           for (const li of this.byNodeIn.get(cur) || []) {
-            const src = this.linksIdx[li].a;
+            const link = this.linksIdx[li];
+            if (link.group !== "deps" && link.group !== "client") continue;
+            const src = link.a;
             if (!affected.has(src)) {
               affected.add(src);
               queue.push(src);
@@ -1035,12 +1109,13 @@ window.__ModuleLoader__.load({
             const other = link.a === idx ? this.data.nodes[link.b] : this.data.nodes[link.a];
             if (!other) return "";
             const on = other.enabled && node.enabled;
-            return `<span style="display:inline-flex;align-items:center;gap:4px;margin:1px 4px 1px 0;background:rgba(0,0,0,0.04);border-radius:5px;padding:1px 6px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};display:inline-block;"></span>${escapeHtml(other.id)}<span style="color:#a1a1a6;">${on ? "\u5B9E" : "\u865A"}</span></span>`;
+            const otherName = other.label || other.id;
+            return `<span style="display:inline-flex;align-items:center;gap:4px;margin:1px 4px 1px 0;background:rgba(0,0,0,0.04);border-radius:5px;padding:1px 6px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};display:inline-block;"></span>${escapeHtml(otherName)}<span style="color:#a1a1a6;">${escapeHtml(RELATION_BADGE[link.relation] || link.relation)}</span></span>`;
           }).join("");
           const phaseBadge = node.phase === "failed" ? `<span style="color:${COL_FAILED};font-weight:700;"> \xB7 \u52A0\u8F7D\u5931\u8D25</span>` : node.phase === "loading" || node.phase === "pending" ? `<span style="color:${COL_LOADING};font-weight:700;"> \xB7 \u52A0\u8F7D\u4E2D</span>` : "";
           const orphanBadge = node.orphan ? `<span style="color:#8e8e93;"> \xB7 \u672A\u88AB\u5F15\u7528</span>` : "";
           tip.innerHTML = `
-            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${node.enabled ? "\u25CF" : "\u25CB"} ${escapeHtml(node.id)}</div>
+            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${node.enabled ? "\u25CF" : "\u25CB"} ${escapeHtml(node.hub ? node.label : node.id)}</div>
             <div style="color:#6e6e73;margin-bottom:5px;">${escapeHtml(node.category)} \xB7 ${n.linkCount} \u8FDE\u63A5 \xB7 ${node.enabled ? "\u542F\u7528" : "\u7981\u7528"}${phaseBadge}${orphanBadge}</div>
             <div style="color:#a1a1a6;line-height:1.5;font-size:11.5px;">${escapeHtml(node.desc || "")}</div>
             <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(0,0,0,0.06);color:#6e6e73;font-size:11px;line-height:1.7;">${rels || "\u65E0\u8FDE\u63A5"}</div>`;
@@ -1062,12 +1137,14 @@ window.__ModuleLoader__.load({
         const outLinks = (this.byNodeOut.get(idx) || []).map((li) => this.linksIdx[li]);
         const inLinks = (this.byNodeIn.get(idx) || []).map((li) => this.linksIdx[li]);
         const relRow = (link, arrow) => {
-          const otherId = arrow === "\u2192" ? this.data.nodes[link.b]?.id : this.data.nodes[link.a]?.id;
-          if (!otherId) return "";
           const otherNode = arrow === "\u2192" ? this.data.nodes[link.b] : this.data.nodes[link.a];
-          const on = otherNode ? otherNode.enabled && node.enabled : false;
-          return `<div data-nav="${escapeHtml(otherId)}" style="padding:3px 7px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};display:flex;align-items:center;gap:5px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};flex-shrink:0;"></span><span>${arrow} ${escapeHtml(otherId)}</span><span style="font-size:9px;color:#a1a1a6;background:rgba(0,0,0,0.05);border-radius:4px;padding:1px 5px;margin-left:auto;">${escapeHtml(link.relation)}</span></div>`;
+          if (!otherNode) return "";
+          const otherName = otherNode.label || otherNode.id;
+          const on = otherNode.enabled && node.enabled;
+          const badge = RELATION_BADGE[link.relation] || link.relation;
+          return `<div data-nav="${escapeHtml(otherNode.id)}" style="padding:3px 7px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};display:flex;align-items:center;gap:5px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};flex-shrink:0;"></span><span>${arrow} ${escapeHtml(otherName)}</span><span style="font-size:9px;color:#a1a1a6;background:rgba(0,0,0,0.05);border-radius:4px;padding:1px 5px;margin-left:auto;">${escapeHtml(badge)}</span></div>`;
         };
+        const isHub = node.hub === "service" || node.hub === "profile";
         const phasePill = node.phase === "failed" ? `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(255,69,58,0.12);color:${COL_FAILED};">\u52A0\u8F7D\u5931\u8D25</span>` : node.phase === "loading" || node.phase === "pending" ? `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(255,159,10,0.12);color:${COL_LOADING};">\u52A0\u8F7D\u4E2D</span>` : "";
         const orphanPill = node.orphan ? `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(142,142,147,0.14);color:#8e8e93;">\u672A\u88AB\u5F15\u7528</span>` : "";
         const metaRows = [];
@@ -1077,11 +1154,11 @@ window.__ModuleLoader__.load({
         const impactActive = this.impactRoot === idx;
         el.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
-            <div style="font-size:14px;font-weight:700;word-break:break-all;">${node.enabled ? "\u25CF" : "\u25CB"} ${escapeHtml(node.id)}</div>
+            <div style="font-size:14px;font-weight:700;word-break:break-all;">${node.hub === "service" ? "\u2699" : node.hub === "profile" ? "\u25CF" : node.enabled ? "\u25CF" : "\u25CB"} ${escapeHtml(isHub ? node.label : node.id)}</div>
             <button class="dshpg-close" style="background:none;border:none;font-size:17px;color:#a1a1a6;cursor:pointer;padding:2px 4px;">\xD7</button>
           </div>
           <div style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:5px;">
-            <span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:${node.enabled ? "rgba(52,199,89,0.12)" : "rgba(255,59,48,0.1)"};color:${node.enabled ? "#248a3d" : "#d70015"};">${node.enabled ? "\u542F\u7528" : "\u7981\u7528"}</span>
+            ${isHub ? "" : `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:${node.enabled ? "rgba(52,199,89,0.12)" : "rgba(255,59,48,0.1)"};color:${node.enabled ? "#248a3d" : "#d70015"};">${node.enabled ? "\u542F\u7528" : "\u7981\u7528"}</span>`}
             <span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(0,0,0,0.05);color:#6e6e73;">${escapeHtml(node.category)}</span>
             ${phasePill}${orphanPill}
           </div>
@@ -1094,11 +1171,11 @@ window.__ModuleLoader__.load({
               <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${outLinks.length}</div><div style="font-size:9.5px;color:#a1a1a6;">\u51FA\u5EA6</div></div>
               <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${n.linkCount}</div><div style="font-size:9.5px;color:#a1a1a6;">\u603B\u8FDE\u63A5</div></div>
             </div></div>
-          <div style="margin-bottom:12px;"><button class="dshpg-impact" style="width:100%;padding:7px 10px;border-radius:9px;border:1px solid ${impactActive ? COL_IMPACT : this.isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)"};background:${impactActive ? "rgba(255,100,130,0.12)" : "transparent"};color:${impactActive ? COL_IMPACT : this.isDark ? "#e4e4e7" : "#333"};font-size:11.5px;font-weight:600;cursor:pointer;">${impactActive ? "\u6E05\u9664\u5F71\u54CD\u5206\u6790" : "\u5378\u8F7D\u5F71\u54CD\u5206\u6790"}</button>
-            <div class="dshpg-impact-result" style="margin-top:8px;"></div></div>
-          ${outLinks.length ? `<div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u4F9D\u8D56\u4E0B\u6E38 (${outLinks.length})</div>
+          ${isHub ? "" : `<div style="margin-bottom:12px;"><button class="dshpg-impact" style="width:100%;padding:7px 10px;border-radius:9px;border:1px solid ${impactActive ? COL_IMPACT : this.isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)"};background:${impactActive ? "rgba(255,100,130,0.12)" : "transparent"};color:${impactActive ? COL_IMPACT : this.isDark ? "#e4e4e7" : "#333"};font-size:11.5px;font-weight:600;cursor:pointer;">${impactActive ? "\u6E05\u9664\u5F71\u54CD\u5206\u6790" : "\u5378\u8F7D\u5F71\u54CD\u5206\u6790"}</button>
+            <div class="dshpg-impact-result" style="margin-top:8px;"></div></div>`}
+          ${outLinks.length ? `<div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u4E0B\u6E38\u5173\u7CFB (${outLinks.length})</div>
             ${outLinks.map((l) => relRow(l, "\u2192")).join("")}</div>` : ""}
-          ${inLinks.length ? `<div><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u88AB\u4F9D\u8D56 (${inLinks.length})</div>
+          ${inLinks.length ? `<div><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u4E0A\u6E38\u5173\u7CFB (${inLinks.length})</div>
             ${inLinks.map((l) => relRow(l, "\u2190")).join("")}</div>` : ""}`;
         this.wrapper.appendChild(el);
         this.detailEl = el;
@@ -1135,9 +1212,12 @@ window.__ModuleLoader__.load({
         const el = document.createElement("div");
         el.style.cssText = `position:absolute;left:${Math.min(mx, this.state.W - 190)}px;top:${Math.min(my, this.state.H - 160)}px;background:${this.isDark ? "rgba(28,28,34,0.97)" : "rgba(255,255,255,0.97)"};border:1px solid ${this.isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"};border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,0.18);padding:5px;z-index:11;font-size:12px;min-width:150px;`;
         const item = (text) => `<div class="dshpg-menu-item" style="padding:6px 12px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#e4e4e7" : "#333"};">${escapeHtml(text)}</div>`;
-        let html = item("\u{1F3AF} \u805A\u7126\u6B64\u8282\u70B9") + item("\u{1F4CB} \u590D\u5236\u5305\u540D");
-        if (node.repository || node.homepage) html += item("\u{1F517} \u6253\u5F00\u4ED3\u5E93\u4E3B\u9875");
-        html += item("\u{1F4E6} \u6253\u5F00 npm \u9875\u9762") + item("\u{1F9E9} \u5378\u8F7D\u5F71\u54CD\u5206\u6790");
+        const isHub = node.hub === "service" || node.hub === "profile";
+        let html = item("\u{1F3AF} \u805A\u7126\u6B64\u8282\u70B9") + item(isHub ? "\u{1F4CB} \u590D\u5236\u540D\u79F0" : "\u{1F4CB} \u590D\u5236\u5305\u540D");
+        if (!isHub) {
+          if (node.repository || node.homepage) html += item("\u{1F517} \u6253\u5F00\u4ED3\u5E93\u4E3B\u9875");
+          html += item("\u{1F4E6} \u6253\u5F00 npm \u9875\u9762") + item("\u{1F9E9} \u5378\u8F7D\u5F71\u54CD\u5206\u6790");
+        }
         el.innerHTML = html;
         this.wrapper.appendChild(el);
         this.menuEl = el;
@@ -1151,31 +1231,33 @@ window.__ModuleLoader__.load({
           });
           this.hideMenu();
         });
-        if (node.repository || node.homepage) {
-          items.item(2)?.addEventListener("click", () => {
-            const url = this.normalizeUrl(node.repository || node.homepage || "");
-            if (url) window.open(url, "_blank", "noopener");
-            this.hideMenu();
-          });
-          items.item(3)?.addEventListener("click", () => {
-            window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener");
-            this.hideMenu();
-          });
-          items.item(4)?.addEventListener("click", () => {
-            this.setImpact(idx);
-            this.showDetail(idx);
-            this.hideMenu();
-          });
-        } else {
-          items.item(2)?.addEventListener("click", () => {
-            window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener");
-            this.hideMenu();
-          });
-          items.item(3)?.addEventListener("click", () => {
-            this.setImpact(idx);
-            this.showDetail(idx);
-            this.hideMenu();
-          });
+        if (!isHub) {
+          if (node.repository || node.homepage) {
+            items.item(2)?.addEventListener("click", () => {
+              const url = this.normalizeUrl(node.repository || node.homepage || "");
+              if (url) window.open(url, "_blank", "noopener");
+              this.hideMenu();
+            });
+            items.item(3)?.addEventListener("click", () => {
+              window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener");
+              this.hideMenu();
+            });
+            items.item(4)?.addEventListener("click", () => {
+              this.setImpact(idx);
+              this.showDetail(idx);
+              this.hideMenu();
+            });
+          } else {
+            items.item(2)?.addEventListener("click", () => {
+              window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener");
+              this.hideMenu();
+            });
+            items.item(3)?.addEventListener("click", () => {
+              this.setImpact(idx);
+              this.showDetail(idx);
+              this.hideMenu();
+            });
+          }
         }
         const close = (e) => {
           if (!el.contains(e.target)) {
@@ -1411,6 +1493,7 @@ window.__ModuleLoader__.load({
       const [searchInfo, setSearchInfo] = import_react.default.useState({ count: 0, active: 0 });
       const [layout, setLayout] = import_react.default.useState("ring");
       const [cats, setCats] = import_react.default.useState([]);
+      const [relHidden, setRelHidden] = import_react.default.useState({});
       const [updatedAt, setUpdatedAt] = import_react.default.useState("");
       const fetchGraph = import_react.default.useCallback((force = false) => {
         return fetch(`/dsh-plugin-constellation/graph${force ? "?refresh=1" : ""}`, { cache: "no-store" }).then((res) => {
@@ -1515,7 +1598,7 @@ window.__ModuleLoader__.load({
           "div",
           { style: { padding: "10px 18px 6px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flexShrink: 0 } },
           import_react.default.createElement("span", { style: { fontWeight: 700, fontSize: 15, color: isDark ? "#f0f0f2" : "#1d1d1f" } }, t("overlay.title")),
-          import_react.default.createElement("span", { style: { fontSize: 11, color: isDark ? "#707078" : "#a1a1a6" } }, `${data.nodes.length} \u63D2\u4EF6 \xB7 ${data.links.length} \u4F9D\u8D56${updatedAt ? ` \xB7 ${updatedAt}` : ""}`),
+          import_react.default.createElement("span", { style: { fontSize: 11, color: isDark ? "#707078" : "#a1a1a6" } }, `${data.nodes.length} \u8282\u70B9 \xB7 ${data.links.length} \u5173\u7CFB\u7EBF${updatedAt ? ` \xB7 ${updatedAt}` : ""}`),
           import_react.default.createElement("input", {
             value: searchQuery,
             placeholder: t("search.placeholder"),
@@ -1615,6 +1698,37 @@ window.__ModuleLoader__.load({
             },
             import_react.default.createElement("span", { style: { width: 7, height: 7, borderRadius: "50%", background: c.color, opacity: c.hidden ? 0.35 : 1 } }),
             `${c.name} ${c.count}`
+          )),
+          // relation-type filter chips (line-style preview via borderTop)
+          import_react.default.createElement("span", { style: { width: 1, height: 14, background: isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)", margin: "0 2px", flexShrink: 0 } }),
+          RELATION_STYLES.map((rs) => import_react.default.createElement(
+            "button",
+            {
+              key: `rel-${rs.group}`,
+              title: rs.hint,
+              onClick: () => {
+                const eng = engineRef.current;
+                if (!eng) return;
+                const hidden = !eng.isRelationHidden(rs.group);
+                eng.setRelationHidden(rs.group, hidden);
+                setRelHidden((prev) => ({ ...prev, [rs.group]: hidden }));
+              },
+              style: {
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "2px 8px",
+                fontSize: 10.5,
+                borderRadius: 999,
+                cursor: "pointer",
+                border: `1px solid ${relHidden[rs.group] ? "transparent" : rs.color + "55"}`,
+                background: relHidden[rs.group] ? "transparent" : rs.color + "12",
+                color: relHidden[rs.group] ? isDark ? "#707078" : "#a1a1a6" : isDark ? "#e4e4e7" : "#1d1d1f",
+                textDecoration: relHidden[rs.group] ? "line-through" : "none"
+              }
+            },
+            import_react.default.createElement("span", { style: { width: 14, height: 0, borderTop: `2px ${rs.css} ${rs.color}`, opacity: relHidden[rs.group] ? 0.35 : 1 } }),
+            t(rs.key)
           ))
         ),
         import_react.default.createElement("div", {

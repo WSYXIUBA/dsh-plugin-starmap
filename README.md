@@ -13,17 +13,19 @@
 - 设置持久化在 `~/.dsh/dsh-plugin-constellation/settings.json`，即时保存
 
 ### 可视化
-- **自动生成依赖**：动态枚举 `~/.dsh/profiles` 下每个 profile（desktop / web / 自定义），扫描全部 node_modules 层，读取 `dependencies` / `peerDependencies` 构建真实依赖图
+- **四类关系线**：npm 依赖（package.json deps/peer，实线）· 服务注入（Cordis `inject=[…]`，点线连向 ⚙服务枢纽）· 客户端模块（`dsh.client.inject`，虚线）· Profile 归属（bundle 成员，灰线）；工具栏可按类型开关
+- **服务/Profile 枢纽**：每个被注入的 Cordis 服务是一个 ⚙枢纽节点（不猜测提供方——未知的提供方只是缺一条线，错误的提供方是谎言）；每个 profile 是 ●枢纽连向其 bundle 成员
+- **自动生成**：动态枚举 `~/.dsh/profiles` 下每个 profile（desktop / web / 自定义），扫描全部 node_modules 层，读取 `dependencies` / `peerDependencies` / 入口 JS 的 inject 声明 / `dsh.client.inject`
 - **bundles 权威分类**：以 profile 的 `dsh.profile.bundles` 为第三方插件的权威来源，未来安装的任何第三方插件自动正确分类，无需硬编码规则
 - **双布局**：分类环布局 + 力导向布局（确定性力模拟，无第三方依赖）一键切换，平滑过渡
-- **分类聚簇**：15 个分类（Web UI 层 / 客户端插件 / 核心基础设施 / 第三方插件 …），第三方插件金色圈
+- **分类聚簇**：17 个分类（Web UI 层 / 核心基础设施 / 服务枢纽 / Profile 枢纽 / 第三方插件 …）
 - **启停 + 运行状态**：启用实线呼吸光效；禁用虚线静止；**加载失败红色警示**；加载中橙色
 - **视差星空背景**：透明画布下 140 颗缓动闪烁星星随平移产生视差
 
 ### 分析工具
 - **实时状态**：每 5 秒通过官方 remote（`pluginInventory`）刷新启停/运行状态，不可用时自动回退 HTTP
-- **卸载影响分析**：点击节点 → "卸载影响分析"，高亮全部传递依赖方（谁会因移除它而受影响）
-- **孤儿检测**：不被任何 bundle 引用、也不被任何插件传递依赖的残留包，灰色虚线圈标出（实测能找出残留的重复安装）
+- **卸载影响分析**：点击节点 → "卸载影响分析"，沿 npm 依赖 + 客户端模块线高亮全部传递受影响方（服务/Profile 线无卸载语义，不参与传播）
+- **孤儿检测**：不被任何 bundle 引用、也不被任何插件 npm/client 依赖的残留包，灰色虚线圈标出（实测能找出残留的重复安装）
 - **安装来源**：详情面板显示版本 / 安装源（`^1.8.0`、`github:u/r`）/ 所属 profile
 
 ### 交互
