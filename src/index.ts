@@ -1,32 +1,49 @@
 /**
  * dsh-plugin-constellation host entry.
  *
- * Builds the plugin graph by scanning the profile's node_modules for ALL
+ * Builds the plugin graph by scanning the profiles' node_modules for ALL
  * packages (official @deepseek-ai plugins + any third-party plugins the user
  * installs later) and reading their real dependencies/peerDependencies from
- * package.json. Plugin enabled/disabled state is merged from the official
- * plugin inventory (ctx.pluginInventory.list()).
+ * package.json. Plugin enabled/disabled state and fiber phase are merged from
+ * the official plugin inventory (ctx.pluginInventory.list()).
+ *
+ * Profiles are enumerated dynamically: every subdirectory of ~/.dsh/profiles
+ * that carries a package.json with `dsh.profile.bundles` is a profile. Its
+ * bundles list is the authoritative source for "what is a user-installed
+ * plugin", so future third-party plugins are classified without code changes.
  *
  * Data exposed as JSON HTTP route `/dsh-plugin-constellation/graph` via host
- * webServer (dshmarket-style host→client bridge).
+ * webServer (dshmarket-style host→client bridge), with mtime-keyed caching.
  *
  * NOTE: no default export — the Cordis loader unwraps `exports.default ?? exports`
  * and would drop named exports if a default were present.
  */
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const name = "dsh-plugin-constellation";
 export const inject = ["webServer", "loader", "pluginInventory"];
 
 /* ── graph data model ── */
+export type FiberPhase = "pending" | "loading" | "active" | "failed" | "unloading" | null;
+
 export interface GraphNode {
   id: string;
   label: string;
   category: string;
   enabled: boolean;
+  /** loader fiber phase from pluginInventory: active / failed / loading / … */
+  phase: FiberPhase;
   version: string;
   desc: string;
+  /** dependency spec from the profile package.json (e.g. "^1.8.0", "github:u/r") */
+  installSource: string;
+  /** names of the profiles that reference this package */
+  profiles: string[];
+  /** true when no profile bundle or loaded entry reaches this package */
+  orphan: boolean;
+  repository: string;
+  homepage: string;
 }
 
 export interface GraphLink {
@@ -39,6 +56,38 @@ export interface GraphData {
   nodes: GraphNode[];
   links: GraphLink[];
   scannedAt: string;
+}
+
+/* ── profile enumeration ── */
+interface ProfileInfo {
+  name: string;
+  dir: string;
+  /** dsh.profile.bundles — authoritative plugin list */
+  bundles: string[];
+  /** dependencies map from the profile package.json (name → version spec) */
+  depSpecs: Map<string, string>;
+}
+
+function enumerateProfiles(profilesRoot: string): ProfileInfo[] {
+  const out: ProfileInfo[] = [];
+  let entries: string[] = [];
+  try { entries = readdirSync(profilesRoot); } catch { return out; }
+  for (const entry of entries) {
+    if (entry.startsWith(".") || entry === "node_modules") continue;
+    const dir = join(profilesRoot, entry);
+    const pkgPath = join(dir, "package.json");
+    if (!existsSync(pkgPath)) continue;
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      const bundles: string[] = Array.isArray(pkg?.dsh?.profile?.bundles) ? pkg.dsh.profile.bundles : [];
+      const depSpecs = new Map<string, string>();
+      if (pkg?.dependencies && typeof pkg.dependencies === "object") {
+        for (const [k, v] of Object.entries(pkg.dependencies)) depSpecs.set(k, String(v));
+      }
+      out.push({ name: entry, dir, bundles, depSpecs });
+    } catch { /* malformed profile package.json — skip */ }
+  }
+  return out;
 }
 
 /* ── category inference ── */
@@ -61,7 +110,7 @@ const CATEGORY_RULES: Array<[RegExp, string]> = [
   [/^cordis-/, "Cordis 基建"],
 ];
 
-function categorize(moduleName: string): string {
+function categorize(moduleName: string, authoritative: Set<string>): string {
   const short = moduleName.replace(/^@deepseek-ai\//, "");
   // cordis: prefixed loader entries are official Cordis infrastructure.
   if (moduleName.startsWith("cordis:") || short.startsWith("cordis:")) return "Cordis 基建";
@@ -77,9 +126,8 @@ function categorize(moduleName: string): string {
     if (short.startsWith("dsh-")) return "核心基础设施";
     return "基础库";
   }
-  // Third-party user-installed plugins.
-  if (moduleName === "dshmarket" || moduleName === "dsh-plugin-constellation") return "第三方插件";
-  if (moduleName.startsWith("@")) return "第三方插件";
+  // Anything a profile explicitly bundles is a third-party plugin.
+  if (authoritative.has(moduleName)) return "第三方插件";
   // Desktop shell builtins.
   if (moduleName === "dsh-plugin-desktop" || moduleName === "dsh-community-market" || moduleName === "dsh-market") {
     return "核心基础设施";
@@ -92,17 +140,16 @@ function categorize(moduleName: string): string {
 /* ── keep only plugin-shaped packages (official + third-party DSH plugins) ── */
 const CORE_LIBS = new Set(["cordis", "cosmokit", "schemastery"]);
 
-function isPluginShape(name: string): boolean {
+function isPluginShape(name: string, authoritative: Set<string>): boolean {
   if (name.startsWith("@deepseek-ai/")) return true;
   if (CORE_LIBS.has(name)) return true;
-  if (["dshmarket", "dsh-plugin-constellation", "dsh-plugin-desktop", "dsh-community-market", "dsh-market"].includes(name)) return true;
+  if (authoritative.has(name)) return true;
+  if (name === "dsh-plugin-desktop" || name === "dsh-community-market" || name === "dsh-market") return true;
   if (name.startsWith("dsh-plugin-desktop/")) return true;
   if (name.startsWith("dsh-") || name.startsWith("cordis-")) return true;
   if (name.startsWith("@")) {
     const base = name.split("/").pop() || "";
     if (base.startsWith("dsh-") || base.startsWith("cordis-")) return true;
-    // known third-party plugin scopes
-    if (name.includes("hindsight") || name.includes("coding-agents")) return true;
   }
   return false;
 }
@@ -117,24 +164,20 @@ function findProfilesRoot(): string | null {
   return null;
 }
 
-/* ── scan ALL packages in the profile's node_modules layers ── */
-function scanAllPackages(profilesRoot: string): Map<string, any> {
+/* ── scan ALL packages in every profile's node_modules layers ── */
+function scanAllPackages(profilesRoot: string, profiles: ProfileInfo[]): Map<string, any> {
   const pkgs = new Map<string, any>(); // module name → package.json
-  const layers = [
-    join(profilesRoot, "node_modules"),
-    join(profilesRoot, "desktop", "node_modules"),
-  ];
+  const layers = [join(profilesRoot, "node_modules"), ...profiles.map((p) => join(p.dir, "node_modules"))];
   const seen = new Set<string>();
 
   for (const layer of layers) {
     if (!existsSync(layer)) continue;
-    // scoped dirs (@deepseek-ai, @bocha-ai, @vectorize-io …)
     let entries: string[] = [];
     try { entries = readdirSync(layer); } catch { continue; }
     for (const entry of entries) {
       if (entry.startsWith(".") || entry === ".pnpm") continue;
       if (entry.startsWith("@")) {
-        // scoped package dirs
+        // scoped package dirs (@deepseek-ai, @bocha-ai, @vectorize-io …)
         let scoped: string[] = [];
         const scopeDir = join(layer, entry);
         try { scoped = readdirSync(scopeDir); } catch { continue; }
@@ -165,6 +208,12 @@ function scanAllPackages(profilesRoot: string): Map<string, any> {
   return pkgs;
 }
 
+/* ── dependency edges of a package (kept targets only) ── */
+function* depEntries(pkg: any): Iterable<[string, string]> {
+  for (const dep of Object.keys(pkg?.dependencies || {})) yield [dep, "deps"];
+  for (const dep of Object.keys(pkg?.peerDependencies || {})) yield [dep, "peer"];
+}
+
 /* ── build graph ── */
 function buildGraph(hostCtx: any): GraphData {
   const profilesRoot = findProfilesRoot();
@@ -176,59 +225,127 @@ function buildGraph(hostCtx: any): GraphData {
     return { nodes: [], links: [], scannedAt: new Date().toISOString() };
   }
 
-  // Official plugin inventory → enabled/disabled state (authoritative).
-  const stateMap = new Map<string, boolean>();
+  const profiles = enumerateProfiles(profilesRoot);
+
+  // Authoritative third-party plugin set: union of all profiles' bundles.
+  const authoritative = new Set<string>();
+  for (const p of profiles) for (const b of p.bundles) authoritative.add(b);
+
+  // install source + owning profiles for bundled/declared packages
+  const installSpec = new Map<string, string>();
+  const ownerProfiles = new Map<string, string[]>();
+  for (const p of profiles) {
+    for (const b of p.bundles) {
+      if (!ownerProfiles.has(b)) ownerProfiles.set(b, []);
+      ownerProfiles.get(b)!.push(p.name);
+    }
+    for (const [depName, spec] of p.depSpecs) {
+      installSpec.set(depName, spec);
+      if (!ownerProfiles.has(depName)) ownerProfiles.set(depName, []);
+      if (!ownerProfiles.get(depName)!.includes(p.name)) ownerProfiles.get(depName)!.push(p.name);
+    }
+  }
+
+  // Official plugin inventory → enabled/disabled state + fiber phase (authoritative).
+  const stateMap = new Map<string, { enabled: boolean; phase: FiberPhase }>();
   try {
     const result = hostCtx.pluginInventory.list();
     const entries = result?.entries || result || [];
     for (const e of entries) {
       const mn = String(e.moduleName || e.id || "");
-      if (mn) stateMap.set(mn, e.enabled !== false);
+      if (!mn) continue;
+      const phase = (e.fiberPhase === undefined ? null : String(e.fiberPhase)) as FiberPhase;
+      stateMap.set(mn, { enabled: e.enabled !== false, phase });
     }
   } catch { /* ignore */ }
 
-  // Scan every package in the profile.
-  const pkgs = scanAllPackages(profilesRoot);
+  // Scan every package in every profile layer.
+  const pkgs = scanAllPackages(profilesRoot, profiles);
 
   // Build nodes: keep only plugin-shaped packages.
   for (const [name, pkg] of pkgs) {
-    if (!isPluginShape(name)) continue;
+    if (!isPluginShape(name, authoritative)) continue;
     const nodeId = name;
     if (known.has(nodeId)) continue;
     known.add(nodeId);
-    const enabled = stateMap.has(name) ? stateMap.get(name)! : true;
+    const st = stateMap.get(name);
+    const repo = pkg?.repository;
+    const repoUrl = typeof repo === "string" ? repo : repo?.url || "";
     nodes.push({
       id: nodeId,
       label: name,
-      category: categorize(nodeId),
-      enabled,
+      category: categorize(nodeId, authoritative),
+      enabled: st ? st.enabled : true,
+      phase: st ? st.phase : null,
       version: pkg?.version || "",
       desc: pkg?.description || "",
+      installSource: installSpec.get(name) || "",
+      profiles: ownerProfiles.get(name) || [],
+      orphan: false, // filled after reachability below
+      repository: repoUrl || "",
+      homepage: pkg?.homepage || "",
     });
   }
 
   // Build links from every KEPT package's real dependencies (auto-generated).
   const seenEdge = new Set<string>();
   for (const [name, pkg] of pkgs) {
-    if (!isPluginShape(name)) continue;
-    const sourceId = name;
-    if (!known.has(sourceId)) continue;
-    const pushLinks = (deps: Record<string, string> | undefined, relation: string) => {
-      if (!deps) return;
-      for (const dep of Object.keys(deps)) {
-        const targetId = known.has(dep) ? dep : null;
-        if (!targetId || sourceId === targetId) continue;
-        const key = `${sourceId}->${targetId}:${relation}`;
-        if (seenEdge.has(key)) continue;
-        seenEdge.add(key);
-        links.push({ source: sourceId, target: targetId, relation });
+    if (!known.has(name)) continue;
+    for (const [dep, relation] of depEntries(pkg)) {
+      if (!known.has(dep) || dep === name) continue;
+      const key = `${name}->${dep}:${relation}`;
+      if (seenEdge.has(key)) continue;
+      seenEdge.add(key);
+      links.push({ source: name, target: dep, relation });
+    }
+  }
+
+  // Orphan detection: a plugin-shaped package is referenced when it is listed
+  // in some profile's bundles, is a loaded loader entry, or is (transitively)
+  // depended on by a referenced package. Everything else is leftover.
+  const referenced = new Set<string>([...authoritative, ...stateMap.keys()]);
+  const adj = new Map<string, string[]>();
+  for (const [name, pkg] of pkgs) {
+    const targets: string[] = [];
+    for (const [dep] of depEntries(pkg)) {
+      if (pkgs.has(dep)) targets.push(dep);
+    }
+    adj.set(name, targets);
+  }
+  const queue = [...referenced];
+  while (queue.length > 0) {
+    const cur = queue.pop()!;
+    for (const next of adj.get(cur) || []) {
+      if (!referenced.has(next)) {
+        referenced.add(next);
+        queue.push(next);
       }
-    };
-    pushLinks(pkg.dependencies, "deps");
-    pushLinks(pkg.peerDependencies, "peer");
+    }
+  }
+  for (const node of nodes) {
+    if (!referenced.has(node.id)) node.orphan = true;
   }
 
   return { nodes, links, scannedAt: new Date().toISOString() };
+}
+
+/* ── mtime-keyed graph cache (node_modules scans are not free) ── */
+let graphCache: { key: string; data: GraphData } | null = null;
+
+function cacheKey(profilesRoot: string): string {
+  const parts: string[] = [];
+  let entries: string[] = [];
+  try { entries = readdirSync(profilesRoot); } catch { return "none"; }
+  for (const entry of entries) {
+    if (entry.startsWith(".") || entry === "node_modules") continue;
+    const dir = join(profilesRoot, entry);
+    const pkgPath = join(dir, "package.json");
+    try { parts.push(`${entry}/pkg:${statSync(pkgPath).mtimeMs}`); } catch { /* ignore */ }
+    const layer = join(dir, "node_modules");
+    try { parts.push(`${entry}/nm:${statSync(layer).mtimeMs}`); } catch { /* ignore */ }
+  }
+  try { parts.push(`shared/nm:${statSync(join(profilesRoot, "node_modules")).mtimeMs}`); } catch { /* ignore */ }
+  return parts.join("|");
 }
 
 /* ── apply: mount the HTTP route ── */
@@ -246,7 +363,21 @@ export function apply(ctx: any): void {
               return;
             }
             try {
-              const body = JSON.stringify(buildGraph(hostCtx));
+              const force = String(request.url || "").includes("refresh=1");
+              const root = findProfilesRoot();
+              const key = root ? cacheKey(root) : "none";
+              if (!force && graphCache && graphCache.key === key) {
+                const body = JSON.stringify(graphCache.data);
+                response.writeHead(200, {
+                  "content-type": "application/json; charset=utf-8",
+                  "cache-control": "no-store",
+                });
+                response.end(body);
+                return;
+              }
+              const data = buildGraph(hostCtx);
+              graphCache = { key, data };
+              const body = JSON.stringify(data);
               response.writeHead(200, {
                 "content-type": "application/json; charset=utf-8",
                 "cache-control": "no-store",

@@ -46,15 +46,35 @@ window.__ModuleLoader__.load({
     var zh = {
       "nav.label": "\u63D2\u4EF6\u661F\u5EA7\u56FE",
       "overlay.title": "\u63D2\u4EF6\u5173\u7CFB\u661F\u5EA7\u56FE",
-      "overlay.hint": "\u6EDA\u52A8\u7F29\u653E \xB7 \u62D6\u62FD\u5E73\u79FB \xB7 \u60AC\u505C\u63A2\u7D22 \xB7 \u70B9\u51FB\u67E5\u770B\u8BE6\u60C5",
-      "footer.tooltip": "\u6253\u5F00\u63D2\u4EF6\u661F\u5EA7\u56FE"
+      "overlay.hint": "\u6EDA\u52A8\u7F29\u653E \xB7 \u62D6\u62FD\u5E73\u79FB \xB7 \u53CC\u51FB\u805A\u7126 \xB7 \u70B9\u51FB\u8BE6\u60C5 \xB7 \u53F3\u952E\u83DC\u5355",
+      "footer.tooltip": "\u6253\u5F00\u63D2\u4EF6\u661F\u5EA7\u56FE",
+      "search.placeholder": "\u641C\u7D22\u63D2\u4EF6\u2026 (Enter \u8DF3\u8F6C)",
+      "layout.ring": "\u5206\u7C7B\u73AF\u5E03\u5C40",
+      "layout.force": "\u529B\u5BFC\u5411\u5E03\u5C40",
+      "export.png": "\u5BFC\u51FA PNG",
+      "export.json": "\u5BFC\u51FA JSON",
+      "action.refresh": "\u5237\u65B0",
+      "category.showAll": "\u5168\u90E8\u663E\u793A"
     };
     var en = {
       "nav.label": "Plugin Graph",
       "overlay.title": "Plugin Constellation Graph",
-      "overlay.hint": "Scroll to zoom \xB7 Drag to pan \xB7 Hover to explore \xB7 Click for details",
-      "footer.tooltip": "Open plugin graph"
+      "overlay.hint": "Scroll to zoom \xB7 Drag to pan \xB7 Double-click to focus \xB7 Click for details \xB7 Right-click menu",
+      "footer.tooltip": "Open plugin graph",
+      "search.placeholder": "Search plugins\u2026 (Enter to jump)",
+      "layout.ring": "Category ring",
+      "layout.force": "Force layout",
+      "export.png": "Export PNG",
+      "export.json": "Export JSON",
+      "action.refresh": "Refresh",
+      "category.showAll": "Show all"
     };
+    var COL_FAILED = "#ff453a";
+    var COL_LOADING = "#ff9f0a";
+    var COL_IMPACT = "#ff6482";
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
     var ConstellationCanvas = class {
       canvas;
       ctx;
@@ -64,10 +84,20 @@ window.__ModuleLoader__.load({
       prepared = [];
       linksIdx = [];
       byNode = /* @__PURE__ */ new Map();
+      byNodeOut = /* @__PURE__ */ new Map();
+      byNodeIn = /* @__PURE__ */ new Map();
       nodeIndexMap = /* @__PURE__ */ new Map();
       catList = [];
       catMembers = /* @__PURE__ */ new Map();
       catColor = /* @__PURE__ */ new Map();
+      hiddenCats = /* @__PURE__ */ new Set();
+      layoutMode = "ring";
+      ringPos = /* @__PURE__ */ new Map();
+      forcePos = /* @__PURE__ */ new Map();
+      impactSet = null;
+      impactRoot = -1;
+      searchMatches = [];
+      searchActive = -1;
       state = {
         panX: 0,
         panY: 0,
@@ -87,10 +117,14 @@ window.__ModuleLoader__.load({
         W: 0,
         H: 0,
         dpr: 1,
-        running: true
+        running: true,
+        interacted: false
       };
       raf = 0;
       isDark = false;
+      resizeObs = null;
+      intersectObs = null;
+      menuEl = null;
       CATEGORY_COLORS = [
         "#0071e3",
         "#34c759",
@@ -103,8 +137,19 @@ window.__ModuleLoader__.load({
         "#ff6482",
         "#a2845e",
         "#8e8e93",
-        "#d4a017"
+        "#d4a017",
+        "#30b0c7",
+        "#c2402a",
+        "#7d7aff"
       ];
+      /** one-time stylesheet for hover states (inline handlers are CSP-blocked) */
+      ensureStyles() {
+        if (document.getElementById("dshpg-styles")) return;
+        const style = document.createElement("style");
+        style.id = "dshpg-styles";
+        style.textContent = ".dshpg-menu-item:hover{background:rgba(128,128,140,0.12);}";
+        document.head.appendChild(style);
+      }
       constructor(container, data) {
         this.data = data;
         this.wrapper = container;
@@ -112,16 +157,22 @@ window.__ModuleLoader__.load({
         this.canvas.style.cssText = "display:block;width:100%;height:100%;cursor:default;";
         this.wrapper.appendChild(this.canvas);
         this.ctx = this.canvas.getContext("2d");
+        this.ensureStyles();
         this.tooltip = document.createElement("div");
         this.tooltip.style.cssText = "position:absolute;background:rgba(255,255,255,0.96);border:1px solid rgba(0,0,0,0.08);border-radius:12px;padding:10px 12px;box-shadow:0 12px 40px rgba(0,0,0,0.14);pointer-events:none;z-index:10;display:none;font-size:12px;max-width:280px;color:#333;";
         this.wrapper.appendChild(this.tooltip);
         this.buildIndex();
         this.bindEvents();
         this.resize();
+        this.observeLifecycle();
         this.animate();
       }
+      /* ── indexing + layouts ── */
       buildIndex() {
         const { nodes, links } = this.data;
+        this.nodeIndexMap = /* @__PURE__ */ new Map();
+        this.catMembers = /* @__PURE__ */ new Map();
+        this.catList = [];
         nodes.forEach((n, i) => {
           this.nodeIndexMap.set(n.id, i);
           if (!this.catMembers.has(n.category)) {
@@ -131,14 +182,6 @@ window.__ModuleLoader__.load({
           this.catMembers.get(n.category).push(i);
         });
         this.catList.forEach((cat, ci) => this.catColor.set(cat, this.CATEGORY_COLORS[ci % this.CATEGORY_COLORS.length]));
-        const clusterRingR = Math.sqrt(Math.max(nodes.length, 1)) * 26;
-        const catCentroid = /* @__PURE__ */ new Map();
-        this.catList.forEach((cat, ci) => {
-          const a = ci / Math.max(this.catList.length, 1) * Math.PI * 2 - Math.PI / 2;
-          const members = this.catMembers.get(cat) || [];
-          const blobR = 26 + Math.sqrt(members.length) * 10;
-          catCentroid.set(cat, { cx: Math.cos(a) * clusterRingR, cy: Math.sin(a) * clusterRingR, r: blobR });
-        });
         let maxDegree = 1;
         const degreeMap = /* @__PURE__ */ new Map();
         links.forEach((l) => {
@@ -148,6 +191,15 @@ window.__ModuleLoader__.load({
         degreeMap.forEach((v) => {
           if (v > maxDegree) maxDegree = v;
         });
+        const clusterRingR = Math.sqrt(Math.max(nodes.length, 1)) * 26;
+        const catCentroid = /* @__PURE__ */ new Map();
+        this.catList.forEach((cat, ci) => {
+          const a = ci / Math.max(this.catList.length, 1) * Math.PI * 2 - Math.PI / 2;
+          const members = this.catMembers.get(cat) || [];
+          const blobR = 26 + Math.sqrt(members.length) * 10;
+          catCentroid.set(cat, { cx: Math.cos(a) * clusterRingR, cy: Math.sin(a) * clusterRingR, r: blobR });
+        });
+        this.ringPos = /* @__PURE__ */ new Map();
         this.prepared = nodes.map((n, i) => {
           const seed = this.hashStr(n.id);
           const centroid = catCentroid.get(n.category);
@@ -157,20 +209,26 @@ window.__ModuleLoader__.load({
           const lr = (centroid?.r || 30) * (0.25 + 0.75 * (Math.abs(seed) % 1e3 / 1e3));
           const wx = (centroid?.cx || 0) + Math.cos(la) * lr;
           const wy = (centroid?.cy || 0) + Math.sin(la) * lr;
+          this.ringPos.set(i, { x: wx, y: wy });
           const degree = degreeMap.get(n.id) || 0;
           return {
             node: n,
-            wx,
-            wy,
+            x: wx,
+            y: wy,
+            tx: wx,
+            ty: wy,
             color: this.catColor.get(n.category) || "#0071e3",
             heat: this.heatColor(Math.sqrt(degree / maxDegree)),
             linkCount: degree,
-            phase: Math.abs(seed) % 1e3 / 1e3 * Math.PI * 2,
+            phase: seed % 1e3 / 1e3 * Math.PI * 2,
             enabled: n.enabled
           };
         });
+        this.computeForceLayout();
         this.linksIdx = [];
         this.byNode = /* @__PURE__ */ new Map();
+        this.byNodeOut = /* @__PURE__ */ new Map();
+        this.byNodeIn = /* @__PURE__ */ new Map();
         links.forEach((link, li) => {
           const ai = this.nodeIndexMap.get(link.source);
           const bi = this.nodeIndexMap.get(link.target);
@@ -182,7 +240,94 @@ window.__ModuleLoader__.load({
           if (!this.byNode.has(bi)) this.byNode.set(bi, []);
           this.byNode.get(ai).push(idx);
           this.byNode.get(bi).push(idx);
+          if (!this.byNodeOut.has(ai)) this.byNodeOut.set(ai, []);
+          this.byNodeOut.get(ai).push(idx);
+          if (!this.byNodeIn.has(bi)) this.byNodeIn.set(bi, []);
+          this.byNodeIn.get(bi).push(idx);
         });
+      }
+      /** deterministic force-directed layout seeded from the ring positions */
+      computeForceLayout() {
+        const n = this.prepared.length;
+        const pos = /* @__PURE__ */ new Map();
+        for (let i = 0; i < n; i++) {
+          const r = this.ringPos.get(i);
+          pos.set(i, { x: r.x * 0.9, y: r.y * 0.9 });
+        }
+        const edges = [];
+        for (const link of this.data.links) {
+          const ai = this.nodeIndexMap.get(link.source);
+          const bi = this.nodeIndexMap.get(link.target);
+          if (ai !== void 0 && bi !== void 0) edges.push([ai, bi]);
+        }
+        const rest = 110;
+        const iter = 260;
+        const maxR = Math.sqrt(Math.max(n, 1)) * 26 * 1.15;
+        for (let it = 0; it < iter; it++) {
+          const fx = new Float64Array(n);
+          const fy = new Float64Array(n);
+          for (let i = 0; i < n; i++) {
+            const a = pos.get(i);
+            for (let j = i + 1; j < n; j++) {
+              const b = pos.get(j);
+              let dx = a.x - b.x, dy = a.y - b.y;
+              let d2 = dx * dx + dy * dy;
+              if (d2 < 1) {
+                d2 = 1;
+                dx = 0.5 + i % 7 * 0.01;
+                dy = -0.4;
+              }
+              const f = 2600 / d2;
+              const d = Math.sqrt(d2);
+              fx[i] += dx / d * f;
+              fy[i] += dy / d * f;
+              fx[j] -= dx / d * f;
+              fy[j] -= dy / d * f;
+            }
+          }
+          for (const [ai, bi] of edges) {
+            const a = pos.get(ai), b = pos.get(bi);
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const d = Math.sqrt(dx * dx + dy * dy) || 1;
+            const f = (d - rest) * 0.035;
+            fx[ai] += dx / d * f;
+            fy[ai] += dy / d * f;
+            fx[bi] -= dx / d * f;
+            fy[bi] -= dy / d * f;
+          }
+          const damp = 0.6;
+          for (let i = 0; i < n; i++) {
+            const p = pos.get(i);
+            fx[i] += -p.x * 0.012;
+            fy[i] += -p.y * 0.012;
+            let nx = p.x + fx[i] * damp;
+            let ny = p.y + fy[i] * damp;
+            const dc = Math.sqrt(nx * nx + ny * ny);
+            if (dc > maxR * 1.6) {
+              nx = nx / dc * maxR * 1.6;
+              ny = ny / dc * maxR * 1.6;
+            }
+            p.x = nx;
+            p.y = ny;
+          }
+        }
+        this.forcePos = pos;
+      }
+      setLayout(mode) {
+        this.layoutMode = mode;
+        const src = mode === "ring" ? this.ringPos : this.forcePos;
+        for (let i = 0; i < this.prepared.length; i++) {
+          const p = src.get(i);
+          if (p) {
+            this.prepared[i].tx = p.x;
+            this.prepared[i].ty = p.y;
+          }
+        }
+        this.state.interacted = false;
+        this.fitView();
+      }
+      getLayout() {
+        return this.layoutMode;
       }
       hashStr(s) {
         let h = 0;
@@ -211,22 +356,60 @@ window.__ModuleLoader__.load({
       lerp(a, b, t) {
         return a + (b - a) * t;
       }
+      /* ── lifecycle observers: resize + pause rendering when hidden ── */
+      observeLifecycle() {
+        if (typeof ResizeObserver !== "undefined") {
+          this.resizeObs = new ResizeObserver(() => this.resize());
+          this.resizeObs.observe(this.wrapper);
+        }
+        if (typeof IntersectionObserver !== "undefined") {
+          this.intersectObs = new IntersectionObserver((es) => {
+            for (const e of es) this.setRunning(e.isIntersecting && !document.hidden);
+          });
+          this.intersectObs.observe(this.wrapper);
+        }
+        document.addEventListener("visibilitychange", this.onVisChange);
+      }
+      onVisChange = () => {
+        const vis = !document.hidden && this.wrapper.isConnected;
+        this.setRunning(vis);
+      };
+      setRunning(run) {
+        if (run === this.state.running) return;
+        this.state.running = run;
+        if (run) this.animate();
+        else cancelAnimationFrame(this.raf);
+      }
       resize() {
         const dpr = window.devicePixelRatio || 1;
         const rect = this.canvas.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) return;
         this.state.W = rect.width;
         this.state.H = rect.height;
         this.canvas.width = rect.width * dpr;
         this.canvas.height = rect.height * dpr;
         this.state.dpr = dpr;
+        if (!this.state.interacted) this.fitView();
+      }
+      fitView() {
         let maxR = 0;
         for (const p of this.prepared) {
-          const d = Math.sqrt(p.wx * p.wx + p.wy * p.wy);
+          const d = Math.sqrt(p.tx * p.tx + p.ty * p.ty);
           if (d > maxR) maxR = d;
         }
         const fitZoom = maxR > 0 ? Math.min(this.state.W, this.state.H) / (maxR * 1.25) : 0.5;
         this.state.zoom = fitZoom;
         this.state.targetZoom = fitZoom;
+        this.state.targetPanX = 0;
+        this.state.targetPanY = 0;
+      }
+      /* ── status helpers ── */
+      isFailed(i) {
+        return this.data.nodes[i]?.phase === "failed";
+      }
+      isBusy(i) {
+        const p = this.data.nodes[i]?.phase;
+        return p === "loading" || p === "pending" || p === "unloading";
       }
       animate = () => {
         const s = this.state;
@@ -250,13 +433,15 @@ window.__ModuleLoader__.load({
         const visible = new Uint8Array(prepared.length);
         for (let i = 0; i < prepared.length; i++) {
           const n = prepared[i];
+          n.x += (n.tx - n.x) * 0.06;
+          n.y += (n.ty - n.y) * 0.06;
           const driftX = 14 * Math.sin(time * 0.6 + n.phase);
           const driftY = 14 * Math.cos(time * 0.5 + n.phase * 1.3);
-          const sx = cx + (n.wx + driftX) * zoom;
-          const sy = cy + (n.wy + driftY) * zoom;
+          const sx = cx + (n.x + driftX) * zoom;
+          const sy = cy + (n.y + driftY) * zoom;
           screenX[i] = sx;
           screenY[i] = sy;
-          visible[i] = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin ? 1 : 0;
+          visible[i] = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin && !this.hiddenCats.has(n.node.category) ? 1 : 0;
         }
         if (mouseX >= 0 && !s.isDragging) {
           let bestDist = zoom > 1.5 ? 80 : 30;
@@ -284,8 +469,9 @@ window.__ModuleLoader__.load({
             const link = this.linksIdx[li];
             const ax = screenX[link.a], ay = screenY[link.a];
             const bx = screenX[link.b], by = screenY[link.b];
+            const inImpact = this.impactSet !== null;
             if (link.on) {
-              ctx.strokeStyle = link.color;
+              ctx.strokeStyle = inImpact ? COL_IMPACT : link.color;
               ctx.globalAlpha = 0.55;
               ctx.lineWidth = 1.5;
             } else {
@@ -309,8 +495,8 @@ window.__ModuleLoader__.load({
               const px = iu * iu * ax + 2 * iu * u * midX + u * u * bx;
               const py = iu * iu * ay + 2 * iu * u * midY + u * u * by;
               ctx.globalAlpha = 0.9 * (0.4 + 0.6 * Math.sin(u * Math.PI));
-              ctx.fillStyle = link.color;
-              ctx.shadowColor = link.color;
+              ctx.fillStyle = inImpact ? COL_IMPACT : link.color;
+              ctx.shadowColor = inImpact ? COL_IMPACT : link.color;
               ctx.shadowBlur = 6;
               ctx.beginPath();
               ctx.arc(px, py, 2, 0, Math.PI * 2);
@@ -326,10 +512,17 @@ window.__ModuleLoader__.load({
           for (const link of this.linksIdx) {
             const ax = screenX[link.a], ay = screenY[link.a];
             const bx = screenX[link.b], by = screenY[link.b];
+            if (!visible[link.a] && !visible[link.b]) continue;
             if (ax < -margin && bx < -margin || ax > W + margin && bx > W + margin || ay < -margin && by < -margin || ay > H + margin && by > H + margin) continue;
-            if (link.on) {
+            const impactLink = this.impactSet !== null && this.impactSet.has(link.a) && this.impactSet.has(link.b);
+            if (impactLink) {
+              ctx.strokeStyle = COL_IMPACT;
+              ctx.globalAlpha = 0.7;
+              ctx.lineWidth = 1.2;
+              ctx.setLineDash([]);
+            } else if (link.on) {
               ctx.strokeStyle = link.color;
-              ctx.globalAlpha = baseAlpha * 1.2;
+              ctx.globalAlpha = this.impactSet !== null ? baseAlpha * 0.4 : baseAlpha * 1.2;
               ctx.lineWidth = 0.6;
               ctx.setLineDash([3, 5]);
               ctx.lineDashOffset = -time * 14;
@@ -354,6 +547,7 @@ window.__ModuleLoader__.load({
         ctx.save();
         ctx.lineJoin = "round";
         for (const cat of this.catList) {
+          if (this.hiddenCats.has(cat)) continue;
           const members = this.catMembers.get(cat) || [];
           const pts = [];
           for (const idx of members) {
@@ -400,7 +594,7 @@ window.__ModuleLoader__.load({
             for (const [, y] of pts) topY = Math.min(topY, y);
             const ly = topY - pad - 10;
             const pw = tw + padX * 2;
-            ctx.fillStyle = color;
+            ctx.fillStyle = this.hiddenCats.has(cat) ? this.hexToRgba(color, 0.35) : color;
             ctx.beginPath();
             if (typeof ctx.roundRect === "function") ctx.roundRect(mx - pw / 2, ly - pillH / 2, pw, pillH, 9);
             else ctx.rect(mx - pw / 2, ly - pillH / 2, pw, pillH);
@@ -442,19 +636,25 @@ window.__ModuleLoader__.load({
           visibleCount++;
           const isHovered = i === hoverIndex;
           const isNeighbor = hoveredLinks.size > 0 && (this.byNode.get(i) || []).some((li) => hoveredLinks.has(li));
+          const inImpact = this.impactSet?.has(i) === true;
+          const isMatch = this.searchMatches.includes(i);
+          const isActiveMatch = this.searchActive === i;
           const rawR = n.enabled ? 3.2 + Math.min(n.linkCount * 0.18, 3.2) : 2.2 + Math.min(n.linkCount * 0.12, 2.4);
           const pulse = n.enabled ? 1 + 0.13 * Math.sin(time * 1.05 + n.phase) : 1;
           const baseR = rawR * pulse;
           const r = Math.max(1.8, baseR * Math.min(zoom, 2));
           const twinkleAlpha = n.enabled ? 0.82 + 0.18 * Math.sin(time * 1.4 + n.phase * 2.1) : 1;
           const baseAlpha = n.enabled ? (0.65 + Math.min(n.linkCount * 0.035, 0.3)) * twinkleAlpha : 0.45;
-          const fill = n.enabled ? n.heat : this.isDark ? "#1a1a22" : "#ffffff";
+          let fill = n.enabled ? n.heat : this.isDark ? "#1a1a22" : "#ffffff";
+          if (this.isFailed(i)) fill = COL_FAILED;
+          else if (this.isBusy(i)) fill = COL_LOADING;
           ctx.beginPath();
           ctx.arc(sx, sy, r, 0, Math.PI * 2);
           ctx.fillStyle = fill;
-          ctx.globalAlpha = isHovered ? 1 : isNeighbor ? 0.95 : hoverIndex >= 0 ? 0.08 : baseAlpha;
-          if (isHovered || isNeighbor) {
-            ctx.shadowColor = n.heat;
+          const dimOthers = hoverIndex >= 0 && !isHovered && !isNeighbor || this.impactSet !== null && !inImpact && !isHovered;
+          ctx.globalAlpha = isHovered ? 1 : isNeighbor || inImpact ? 0.95 : dimOthers ? 0.08 : baseAlpha;
+          if (isHovered || isNeighbor || inImpact || isActiveMatch) {
+            ctx.shadowColor = inImpact ? COL_IMPACT : isActiveMatch ? "#5ac8fa" : n.heat;
             ctx.shadowBlur = isHovered ? 20 : 10;
           }
           ctx.fill();
@@ -466,7 +666,35 @@ window.__ModuleLoader__.load({
             ctx.arc(sx, sy, r, 0, Math.PI * 2);
             ctx.stroke();
           }
-          if (n.enabled && n.linkCount > 3 && !isHovered && hoverIndex < 0) {
+          if (this.isFailed(i)) {
+            ctx.globalAlpha = 0.9;
+            ctx.strokeStyle = COL_FAILED;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.arc(sx, sy, r + 3.5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+          if (n.node.orphan && !this.isFailed(i)) {
+            ctx.globalAlpha = 0.55;
+            ctx.strokeStyle = this.isDark ? "#6a6a74" : "#c7c7cc";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 3]);
+            ctx.beginPath();
+            ctx.arc(sx, sy, r + 3, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+          if (isMatch) {
+            ctx.globalAlpha = isActiveMatch ? 0.95 : 0.55;
+            ctx.strokeStyle = "#5ac8fa";
+            ctx.lineWidth = isActiveMatch ? 2 : 1.2;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r + (isActiveMatch ? 6 : 4.5), 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          if (n.enabled && n.linkCount > 3 && !isHovered && hoverIndex < 0 && this.impactSet === null) {
             const twinkle = 1 + 0.25 * Math.sin(time * 0.9 + n.phase * 1.7);
             ctx.beginPath();
             ctx.arc(sx, sy, r * 2, 0, Math.PI * 2);
@@ -485,13 +713,13 @@ window.__ModuleLoader__.load({
             ctx.fillText(text, sx + r + 5, sy + 4);
             ctx.globalAlpha = 1;
             labelsShown++;
-          } else if (zoom > 1.5 || isNeighbor) {
+          } else if (zoom > 1.5 || isNeighbor || isActiveMatch || inImpact && zoom > 0.5) {
             const lw = 155, lh = 16;
             const lx = sx + r + 5;
             const ly = sy - 8;
             if (canPlace(lx, ly, lw, lh)) {
               claim(lx, ly, lw, lh);
-              ctx.fillStyle = isNeighbor ? this.isDark ? "#a8a8b0" : "#6e6e73" : this.isDark ? "#707078" : "#a1a1a6";
+              ctx.fillStyle = isNeighbor || inImpact ? this.isDark ? "#a8a8b0" : "#6e6e73" : this.isDark ? "#707078" : "#a1a1a6";
               ctx.globalAlpha = 0.9;
               ctx.textAlign = "left";
               ctx.fillText(text, lx, ly + 12);
@@ -503,8 +731,8 @@ window.__ModuleLoader__.load({
         ctx.font = '11px "SF Mono", "Fira Code", Consolas, monospace';
         ctx.fillStyle = this.isDark ? "#707078" : "#a1a1a6";
         ctx.textAlign = "left";
-        ctx.fillText(`\u6EDA\u52A8\u7F29\u653E \xB7 \u62D6\u62FD\u5E73\u79FB \xB7 \u60AC\u505C\u63A2\u7D22 \xB7 \u70B9\u51FB\u67E5\u770B\u8BE6\u60C5`, 12, 16);
-        ctx.fillText(`\u7F29\u653E ${zoom.toFixed(2)}x \xB7 \u53EF\u89C1 ${visibleCount} \u8282\u70B9 \xB7 \u8FB9 ${linksDrawn}`, 12, H - 12);
+        ctx.fillText(`\u6EDA\u52A8\u7F29\u653E \xB7 \u62D6\u62FD\u5E73\u79FB \xB7 \u53CC\u51FB\u805A\u7126 \xB7 \u70B9\u51FB\u8BE6\u60C5 \xB7 \u53F3\u952E\u83DC\u5355`, 12, 16);
+        ctx.fillText(`\u7F29\u653E ${zoom.toFixed(2)}x \xB7 \u53EF\u89C1 ${visibleCount} \u8282\u70B9 \xB7 \u8FB9 ${linksDrawn}${this.impactSet ? ` \xB7 \u5F71\u54CD\u5206\u6790 ${this.impactSet.size} \u8282\u70B9` : ""}`, 12, H - 12);
         ctx.textAlign = "left";
         ctx.font = "600 10px -apple-system, sans-serif";
         ctx.fillStyle = this.isDark ? "#a8a8b0" : "#8e8e93";
@@ -544,6 +772,20 @@ window.__ModuleLoader__.load({
         ctx.lineTo(lx2 - lw3 - 8, H - 15);
         ctx.stroke();
         ctx.setLineDash([]);
+        lx2 -= lw3 + 42;
+        ctx.fillText("\u52A0\u8F7D\u5931\u8D25", lx2, H - 12);
+        const lw4 = ctx.measureText("\u52A0\u8F7D\u5931\u8D25").width;
+        ctx.fillStyle = COL_FAILED;
+        ctx.beginPath();
+        ctx.arc(lx2 - lw4 - 14, H - 15, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        lx2 -= lw4 + 40;
+        ctx.fillText("\u52A0\u8F7D\u4E2D", lx2, H - 12);
+        const lw5 = ctx.measureText("\u52A0\u8F7D\u4E2D").width;
+        ctx.fillStyle = COL_LOADING;
+        ctx.beginPath();
+        ctx.arc(lx2 - lw5 - 14, H - 15, 3.5, 0, Math.PI * 2);
+        ctx.fill();
         this.raf = requestAnimationFrame(this.animate);
       };
       convexHull(points) {
@@ -565,10 +807,12 @@ window.__ModuleLoader__.load({
         upper.pop();
         return lower.concat(upper);
       }
+      /* ── events ── */
       bindEvents() {
         const canvas = this.canvas;
         canvas.addEventListener("wheel", (e) => {
           e.preventDefault();
+          this.state.interacted = true;
           const rect = canvas.getBoundingClientRect();
           const mx = e.clientX - rect.left, my = e.clientY - rect.top;
           const factor = e.deltaY > 0 ? 0.9 : 1.1;
@@ -594,6 +838,7 @@ window.__ModuleLoader__.load({
         });
         canvas.addEventListener("mousedown", (e) => {
           this.state.isDragging = true;
+          this.state.interacted = true;
           this.state.dragStartX = e.clientX;
           this.state.dragStartY = e.clientY;
           this.state.panStartX = this.state.panX;
@@ -611,6 +856,18 @@ window.__ModuleLoader__.load({
           }
           this.state.isDragging = false;
         });
+        canvas.addEventListener("dblclick", () => {
+          if (this.state.hoverIndex >= 0) this.flyToIndex(this.state.hoverIndex, 2.5);
+        });
+        canvas.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          if (this.state.hoverIndex >= 0) {
+            const rect = canvas.getBoundingClientRect();
+            this.showMenu(this.state.hoverIndex, e.clientX - rect.left, e.clientY - rect.top);
+          } else {
+            this.hideMenu();
+          }
+        });
         canvas.addEventListener("mouseleave", () => {
           this.state.mouseX = -1;
           this.state.mouseY = -1;
@@ -619,6 +876,97 @@ window.__ModuleLoader__.load({
           this.tooltip.style.display = "none";
         });
       }
+      /* ── fly to node ── */
+      flyToIndex(idx, zoomLevel = 2.5) {
+        const p = this.prepared[idx];
+        if (!p) return;
+        this.state.interacted = true;
+        this.state.targetZoom = zoomLevel;
+        this.state.targetPanX = -p.tx * zoomLevel;
+        this.state.targetPanY = -p.ty * zoomLevel;
+      }
+      flyToNode(id, zoomLevel = 2.5) {
+        const idx = this.nodeIndexMap.get(id);
+        if (idx === void 0) return false;
+        this.flyToIndex(idx, zoomLevel);
+        return true;
+      }
+      /* ── search ── */
+      setSearch(query) {
+        const q = query.trim().toLowerCase();
+        if (!q) {
+          this.searchMatches = [];
+          this.searchActive = -1;
+          return 0;
+        }
+        this.searchMatches = [];
+        for (let i = 0; i < this.prepared.length; i++) {
+          const n = this.data.nodes[i];
+          if (n.id.toLowerCase().includes(q) || n.category.toLowerCase().includes(q) || (n.desc || "").toLowerCase().includes(q)) {
+            this.searchMatches.push(i);
+          }
+        }
+        this.searchActive = this.searchMatches.length > 0 ? this.searchMatches[0] : -1;
+        if (this.searchActive >= 0) this.flyToIndex(this.searchActive, 2);
+        return this.searchMatches.length;
+      }
+      getSearchState() {
+        return { count: this.searchMatches.length, active: this.searchActive >= 0 ? this.searchMatches.indexOf(this.searchActive) + 1 : 0 };
+      }
+      nextMatch(dir) {
+        if (this.searchMatches.length === 0) return;
+        const cur = this.searchMatches.indexOf(this.searchActive);
+        const next = (cur + dir + this.searchMatches.length) % this.searchMatches.length;
+        this.searchActive = this.searchMatches[next];
+        this.flyToIndex(this.searchActive, 2);
+      }
+      /* ── category visibility ── */
+      setCategoryHidden(cat, hidden) {
+        if (hidden) this.hiddenCats.add(cat);
+        else this.hiddenCats.delete(cat);
+      }
+      isCategoryHidden(cat) {
+        return this.hiddenCats.has(cat);
+      }
+      getCategories() {
+        return this.catList.map((c) => ({
+          name: c,
+          color: this.catColor.get(c) || "#0071e3",
+          count: (this.catMembers.get(c) || []).length
+        }));
+      }
+      /* ── uninstall impact analysis: transitive dependents of a node ── */
+      computeImpact(idx) {
+        const affected = /* @__PURE__ */ new Set([idx]);
+        const queue = [idx];
+        while (queue.length > 0) {
+          const cur = queue.pop();
+          for (const li of this.byNodeIn.get(cur) || []) {
+            const src = this.linksIdx[li].a;
+            if (!affected.has(src)) {
+              affected.add(src);
+              queue.push(src);
+            }
+          }
+        }
+        affected.delete(idx);
+        return [...affected];
+      }
+      setImpact(idx) {
+        if (idx === null) {
+          this.impactSet = null;
+          this.impactRoot = -1;
+          return;
+        }
+        const affected = this.computeImpact(idx);
+        this.impactRoot = idx;
+        this.impactSet = /* @__PURE__ */ new Set([idx, ...affected]);
+      }
+      getImpact() {
+        if (this.impactSet === null) return null;
+        return { root: this.impactRoot, affected: this.computeImpact(this.impactRoot) };
+      }
+      /* ── tooltip (O(1) via adjacency index) ── */
       updateTooltip(mx, my) {
         const idx = this.state.hoverIndex;
         const tip = this.tooltip;
@@ -635,17 +983,20 @@ window.__ModuleLoader__.load({
         if (idx !== this.state.prevHoverIndex) {
           this.state.prevHoverIndex = idx;
           const node = n.node;
-          const conn = this.data.links.filter((l) => l.source === node.id || l.target === node.id);
-          const rels = conn.slice(0, 6).map((l) => {
-            const other = l.source === node.id ? l.target : l.source;
-            const otherNode = this.data.nodes.find((x) => x.id === other);
-            const on = otherNode ? otherNode.enabled && node.enabled : false;
-            return `<span style="display:inline-flex;align-items:center;gap:4px;margin:1px 4px 1px 0;background:rgba(0,0,0,0.04);border-radius:5px;padding:1px 6px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};display:inline-block;"></span>${other}<span style="color:#a1a1a6;">${on ? "\u5B9E" : "\u865A"}</span></span>`;
+          const myLinks = this.byNode.get(idx) || [];
+          const rels = myLinks.slice(0, 6).map((li) => {
+            const link = this.linksIdx[li];
+            const other = link.a === idx ? this.data.nodes[link.b] : this.data.nodes[link.a];
+            if (!other) return "";
+            const on = other.enabled && node.enabled;
+            return `<span style="display:inline-flex;align-items:center;gap:4px;margin:1px 4px 1px 0;background:rgba(0,0,0,0.04);border-radius:5px;padding:1px 6px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};display:inline-block;"></span>${escapeHtml(other.id)}<span style="color:#a1a1a6;">${on ? "\u5B9E" : "\u865A"}</span></span>`;
           }).join("");
+          const phaseBadge = node.phase === "failed" ? `<span style="color:${COL_FAILED};font-weight:700;"> \xB7 \u52A0\u8F7D\u5931\u8D25</span>` : node.phase === "loading" || node.phase === "pending" ? `<span style="color:${COL_LOADING};font-weight:700;"> \xB7 \u52A0\u8F7D\u4E2D</span>` : "";
+          const orphanBadge = node.orphan ? `<span style="color:#8e8e93;"> \xB7 \u672A\u88AB\u5F15\u7528</span>` : "";
           tip.innerHTML = `
-            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${node.enabled ? "\u25CF" : "\u25CB"} ${node.id}</div>
-            <div style="color:#6e6e73;margin-bottom:5px;">${node.category} \xB7 ${n.linkCount} \u8FDE\u63A5 \xB7 ${node.enabled ? "\u542F\u7528" : "\u7981\u7528"}</div>
-            <div style="color:#a1a1a6;line-height:1.5;font-size:11.5px;">${node.desc || ""}</div>
+            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${node.enabled ? "\u25CF" : "\u25CB"} ${escapeHtml(node.id)}</div>
+            <div style="color:#6e6e73;margin-bottom:5px;">${escapeHtml(node.category)} \xB7 ${n.linkCount} \u8FDE\u63A5 \xB7 ${node.enabled ? "\u542F\u7528" : "\u7981\u7528"}${phaseBadge}${orphanBadge}</div>
+            <div style="color:#a1a1a6;line-height:1.5;font-size:11.5px;">${escapeHtml(node.desc || "")}</div>
             <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(0,0,0,0.06);color:#6e6e73;font-size:11px;line-height:1.7;">${rels || "\u65E0\u8FDE\u63A5"}</div>`;
         }
         tip.style.display = "block";
@@ -653,6 +1004,7 @@ window.__ModuleLoader__.load({
         tip.style.left = Math.min(mx + 16, this.state.W - tipW - 12) + "px";
         tip.style.top = Math.min(my + 16, this.state.H - tipH - 12) + "px";
       }
+      /* ── detail panel (O(1) via adjacency index) ── */
       detailEl = null;
       showDetail(idx) {
         const n = this.prepared[idx];
@@ -661,61 +1013,282 @@ window.__ModuleLoader__.load({
         const node = n.node;
         const el = document.createElement("div");
         el.style.cssText = "position:absolute;top:14px;right:14px;width:280px;max-height:calc(100% - 28px);overflow-y:auto;background:" + (this.isDark ? "rgba(28,28,34,0.94)" : "rgba(255,255,255,0.95)") + ";border:1px solid " + (this.isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)") + ";border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,0.14);padding:14px;z-index:5;font-size:12px;color:" + (this.isDark ? "#e4e4e7" : "#333") + ";";
-        const conn = this.data.links.filter((l) => l.source === node.id || l.target === node.id);
-        const outs = conn.filter((l) => l.source === node.id).slice(0, 15);
-        const ins = conn.filter((l) => l.target === node.id).slice(0, 15);
-        const relRow = (l, arrow) => {
-          const other = arrow === "\u2192" ? l.target : l.source;
-          const otherNode = this.data.nodes.find((x) => x.id === other);
+        const outLinks = (this.byNodeOut.get(idx) || []).map((li) => this.linksIdx[li]);
+        const inLinks = (this.byNodeIn.get(idx) || []).map((li) => this.linksIdx[li]);
+        const relRow = (link, arrow) => {
+          const otherId = arrow === "\u2192" ? this.data.nodes[link.b]?.id : this.data.nodes[link.a]?.id;
+          if (!otherId) return "";
+          const otherNode = arrow === "\u2192" ? this.data.nodes[link.b] : this.data.nodes[link.a];
           const on = otherNode ? otherNode.enabled && node.enabled : false;
-          return `<div style="padding:3px 7px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};display:flex;align-items:center;gap:5px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};flex-shrink:0;"></span><span>${arrow} ${other}</span><span style="font-size:9px;color:#a1a1a6;background:rgba(0,0,0,0.05);border-radius:4px;padding:1px 5px;margin-left:auto;">${l.relation}</span></div>`;
+          return `<div data-nav="${escapeHtml(otherId)}" style="padding:3px 7px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};display:flex;align-items:center;gap:5px;"><span style="width:5px;height:5px;border-radius:50%;background:${on ? "#34c759" : "#c7c7cc"};flex-shrink:0;"></span><span>${arrow} ${escapeHtml(otherId)}</span><span style="font-size:9px;color:#a1a1a6;background:rgba(0,0,0,0.05);border-radius:4px;padding:1px 5px;margin-left:auto;">${escapeHtml(link.relation)}</span></div>`;
         };
+        const phasePill = node.phase === "failed" ? `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(255,69,58,0.12);color:${COL_FAILED};">\u52A0\u8F7D\u5931\u8D25</span>` : node.phase === "loading" || node.phase === "pending" ? `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(255,159,10,0.12);color:${COL_LOADING};">\u52A0\u8F7D\u4E2D</span>` : "";
+        const orphanPill = node.orphan ? `<span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(142,142,147,0.14);color:#8e8e93;">\u672A\u88AB\u5F15\u7528</span>` : "";
+        const metaRows = [];
+        if (node.version) metaRows.push(`<div style="display:flex;gap:6px;"><span style="color:#a1a1a6;width:56px;flex-shrink:0;">\u7248\u672C</span><span>${escapeHtml(node.version)}</span></div>`);
+        if (node.installSource) metaRows.push(`<div style="display:flex;gap:6px;"><span style="color:#a1a1a6;width:56px;flex-shrink:0;">\u5B89\u88C5\u6E90</span><span style="word-break:break-all;">${escapeHtml(node.installSource)}</span></div>`);
+        if (node.profiles && node.profiles.length > 0) metaRows.push(`<div style="display:flex;gap:6px;"><span style="color:#a1a1a6;width:56px;flex-shrink:0;">Profile</span><span>${escapeHtml(node.profiles.join(", "))}</span></div>`);
+        const impactActive = this.impactRoot === idx;
         el.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
-            <div style="font-size:14px;font-weight:700;word-break:break-all;">${node.enabled ? "\u25CF" : "\u25CB"} ${node.id}</div>
+            <div style="font-size:14px;font-weight:700;word-break:break-all;">${node.enabled ? "\u25CF" : "\u25CB"} ${escapeHtml(node.id)}</div>
             <button class="dshpg-close" style="background:none;border:none;font-size:17px;color:#a1a1a6;cursor:pointer;padding:2px 4px;">\xD7</button>
           </div>
           <div style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:5px;">
             <span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:${node.enabled ? "rgba(52,199,89,0.12)" : "rgba(255,59,48,0.1)"};color:${node.enabled ? "#248a3d" : "#d70015"};">${node.enabled ? "\u542F\u7528" : "\u7981\u7528"}</span>
-            <span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(0,0,0,0.05);color:#6e6e73;">${node.category}</span>
+            <span style="padding:3px 9px;border-radius:14px;font-size:10.5px;font-weight:600;background:rgba(0,0,0,0.05);color:#6e6e73;">${escapeHtml(node.category)}</span>
+            ${phasePill}${orphanPill}
           </div>
           <div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u63CF\u8FF0</div>
-            <div style="font-size:12px;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};line-height:1.6;">${node.desc || "\uFF08\u65E0\u63CF\u8FF0\uFF09"}</div></div>
+            <div style="font-size:12px;color:${this.isDark ? "#a8a8b0" : "#6e6e73"};line-height:1.6;">${escapeHtml(node.desc || "\uFF08\u65E0\u63CF\u8FF0\uFF09")}</div></div>
+          ${metaRows.length ? `<div style="margin-bottom:12px;display:flex;flex-direction:column;gap:4px;">${metaRows.join("")}</div>` : ""}
           <div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u8FDE\u63A5\u7EDF\u8BA1</div>
             <div style="display:flex;gap:6px;">
-              <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${ins.length}</div><div style="font-size:9.5px;color:#a1a1a6;">\u5165\u5EA6</div></div>
-              <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${outs.length}</div><div style="font-size:9.5px;color:#a1a1a6;">\u51FA\u5EA6</div></div>
+              <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${inLinks.length}</div><div style="font-size:9.5px;color:#a1a1a6;">\u5165\u5EA6</div></div>
+              <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${outLinks.length}</div><div style="font-size:9.5px;color:#a1a1a6;">\u51FA\u5EA6</div></div>
               <div style="flex:1;background:rgba(0,0,0,0.03);border-radius:9px;padding:7px;text-align:center;"><div style="font-size:15px;font-weight:700;">${n.linkCount}</div><div style="font-size:9.5px;color:#a1a1a6;">\u603B\u8FDE\u63A5</div></div>
             </div></div>
-          ${outs.length ? `<div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u4F9D\u8D56\u4E0B\u6E38 (${outs.length})</div>
-            ${outs.map((l) => relRow(l, "\u2192")).join("")}</div>` : ""}
-          ${ins.length ? `<div><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u88AB\u4F9D\u8D56 (${ins.length})</div>
-            ${ins.map((l) => relRow(l, "\u2190")).join("")}</div>` : ""}`;
+          <div style="margin-bottom:12px;"><button class="dshpg-impact" style="width:100%;padding:7px 10px;border-radius:9px;border:1px solid ${impactActive ? COL_IMPACT : this.isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)"};background:${impactActive ? "rgba(255,100,130,0.12)" : "transparent"};color:${impactActive ? COL_IMPACT : this.isDark ? "#e4e4e7" : "#333"};font-size:11.5px;font-weight:600;cursor:pointer;">${impactActive ? "\u6E05\u9664\u5F71\u54CD\u5206\u6790" : "\u5378\u8F7D\u5F71\u54CD\u5206\u6790"}</button>
+            <div class="dshpg-impact-result" style="margin-top:8px;"></div></div>
+          ${outLinks.length ? `<div style="margin-bottom:12px;"><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u4F9D\u8D56\u4E0B\u6E38 (${outLinks.length})</div>
+            ${outLinks.map((l) => relRow(l, "\u2192")).join("")}</div>` : ""}
+          ${inLinks.length ? `<div><div style="font-size:10px;color:#a1a1a6;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:5px;">\u88AB\u4F9D\u8D56 (${inLinks.length})</div>
+            ${inLinks.map((l) => relRow(l, "\u2190")).join("")}</div>` : ""}`;
         this.wrapper.appendChild(el);
         this.detailEl = el;
         el.querySelector(".dshpg-close")?.addEventListener("click", () => this.hideDetail());
+        el.querySelectorAll("[data-nav]").forEach((rowEl) => {
+          rowEl.addEventListener("click", () => {
+            const target = rowEl.getAttribute("data-nav") || "";
+            this.flyToNode(target, 2.5);
+          });
+        });
+        const impactBtn = el.querySelector(".dshpg-impact");
+        impactBtn?.addEventListener("click", () => {
+          this.setImpact(this.impactRoot === idx ? null : idx);
+          this.showDetail(idx);
+          const res = this.detailEl?.querySelector(".dshpg-impact-result");
+          if (res && this.impactRoot === idx) {
+            const affected = this.getImpact().affected;
+            res.innerHTML = affected.length === 0 ? `<div style="color:#34c759;font-size:11.5px;">\u2713 \u6CA1\u6709\u63D2\u4EF6\u4F9D\u8D56\u5B83\uFF0C\u53EF\u5B89\u5168\u79FB\u9664</div>` : `<div style="color:${COL_IMPACT};font-size:11.5px;font-weight:600;margin-bottom:4px;">${affected.length} \u4E2A\u63D2\u4EF6\u5C06\u53D7\u5F71\u54CD\uFF1A</div>` + affected.slice(0, 12).map((a) => `<div style="color:${this.isDark ? "#a8a8b0" : "#6e6e73"};font-size:11px;padding:1px 0;">\xB7 ${escapeHtml(this.data.nodes[a]?.id || "")}</div>`).join("") + (affected.length > 12 ? `<div style="color:#a1a1a6;font-size:11px;">\u2026 \u5171 ${affected.length} \u4E2A</div>` : "");
+          }
+        });
       }
       hideDetail() {
         if (this.detailEl) {
           this.detailEl.remove();
           this.detailEl = null;
         }
+        this.hideMenu();
+      }
+      /* ── right-click context menu ── */
+      showMenu(idx, mx, my) {
+        this.hideMenu();
+        const node = this.data.nodes[idx];
+        if (!node) return;
+        const el = document.createElement("div");
+        el.style.cssText = `position:absolute;left:${Math.min(mx, this.state.W - 190)}px;top:${Math.min(my, this.state.H - 160)}px;background:${this.isDark ? "rgba(28,28,34,0.97)" : "rgba(255,255,255,0.97)"};border:1px solid ${this.isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"};border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,0.18);padding:5px;z-index:11;font-size:12px;min-width:150px;`;
+        const item = (text) => `<div class="dshpg-menu-item" style="padding:6px 12px;border-radius:7px;cursor:pointer;color:${this.isDark ? "#e4e4e7" : "#333"};">${escapeHtml(text)}</div>`;
+        let html = item("\u{1F3AF} \u805A\u7126\u6B64\u8282\u70B9") + item("\u{1F4CB} \u590D\u5236\u5305\u540D");
+        if (node.repository || node.homepage) html += item("\u{1F517} \u6253\u5F00\u4ED3\u5E93\u4E3B\u9875");
+        html += item("\u{1F4E6} \u6253\u5F00 npm \u9875\u9762") + item("\u{1F9E9} \u5378\u8F7D\u5F71\u54CD\u5206\u6790");
+        el.innerHTML = html;
+        this.wrapper.appendChild(el);
+        this.menuEl = el;
+        const items = el.querySelectorAll("div");
+        items.item(0)?.addEventListener("click", () => {
+          this.flyToIndex(idx, 2.5);
+          this.hideMenu();
+        });
+        items.item(1)?.addEventListener("click", () => {
+          if (navigator.clipboard) navigator.clipboard.writeText(node.id).catch(() => {
+          });
+          this.hideMenu();
+        });
+        if (node.repository || node.homepage) {
+          items.item(2)?.addEventListener("click", () => {
+            const url = this.normalizeUrl(node.repository || node.homepage || "");
+            if (url) window.open(url, "_blank", "noopener");
+            this.hideMenu();
+          });
+          items.item(3)?.addEventListener("click", () => {
+            window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener");
+            this.hideMenu();
+          });
+          items.item(4)?.addEventListener("click", () => {
+            this.setImpact(idx);
+            this.showDetail(idx);
+            this.hideMenu();
+          });
+        } else {
+          items.item(2)?.addEventListener("click", () => {
+            window.open(`https://www.npmjs.com/package/${encodeURIComponent(node.id)}`, "_blank", "noopener");
+            this.hideMenu();
+          });
+          items.item(3)?.addEventListener("click", () => {
+            this.setImpact(idx);
+            this.showDetail(idx);
+            this.hideMenu();
+          });
+        }
+        const close = (e) => {
+          if (!el.contains(e.target)) {
+            this.hideMenu();
+            document.removeEventListener("mousedown", close, true);
+          }
+        };
+        setTimeout(() => document.addEventListener("mousedown", close, true), 0);
+      }
+      normalizeUrl(url) {
+        let u = url.trim();
+        if (u.startsWith("git+")) u = u.slice(4);
+        if (u.endsWith(".git")) u = u.slice(0, -4);
+        if (!/^https?:\/\//.test(u)) {
+          if (/^[a-z0-9-]+\/[a-z0-9_.-]+$/i.test(u)) u = `https://github.com/${u}`;
+          else return "";
+        }
+        return u;
+      }
+      hideMenu() {
+        if (this.menuEl) {
+          this.menuEl.remove();
+          this.menuEl = null;
+        }
+      }
+      /* ── live status refresh (no layout change) ── */
+      refreshStatus(entries) {
+        for (const e of entries) {
+          const mn = String(e.moduleName || e.id || "");
+          const idx = this.nodeIndexMap.get(mn);
+          if (idx === void 0) continue;
+          const node = this.data.nodes[idx];
+          node.enabled = e.enabled !== false;
+          node.phase = e.fiberPhase === void 0 ? null : e.fiberPhase;
+          this.prepared[idx].enabled = node.enabled;
+        }
+        for (const link of this.linksIdx) {
+          link.on = this.data.nodes[link.a].enabled && this.data.nodes[link.b].enabled;
+        }
+      }
+      /* ── full data swap (keep view + hidden cats + layout) ── */
+      updateData(next) {
+        const sameShape = next.nodes.length === this.data.nodes.length && next.nodes.every((n, i) => n.id === this.data.nodes[i]?.id);
+        if (sameShape) {
+          next.nodes.forEach((n, i) => {
+            this.data.nodes[i] = n;
+            this.prepared[i].enabled = n.enabled;
+          });
+          for (const link of this.linksIdx) {
+            link.on = this.data.nodes[link.a].enabled && this.data.nodes[link.b].enabled;
+          }
+          return;
+        }
+        this.data = next;
+        this.impactSet = null;
+        this.impactRoot = -1;
+        this.searchMatches = [];
+        this.searchActive = -1;
+        this.hideDetail();
+        this.buildIndex();
+        this.setLayout(this.layoutMode);
+      }
+      /* ── exports ── */
+      exportPNG() {
+        const W = 1920, H = 1200;
+        const off = document.createElement("canvas");
+        off.width = W;
+        off.height = H;
+        const c = off.getContext("2d");
+        c.fillStyle = this.isDark ? "#0f0f14" : "#ffffff";
+        c.fillRect(0, 0, W, H);
+        let maxR = 0;
+        for (const p of this.prepared) {
+          const d = Math.hypot(p.tx, p.ty);
+          if (d > maxR) maxR = d;
+        }
+        const zoom = Math.min(W, H - 80) / (maxR * 2.15);
+        const cx = W / 2, cy = (H + 40) / 2;
+        for (const link of this.linksIdx) {
+          const a = this.prepared[link.a], b = this.prepared[link.b];
+          c.strokeStyle = link.color;
+          c.globalAlpha = link.on ? 0.25 : 0.12;
+          c.lineWidth = 0.8;
+          if (!link.on) c.setLineDash([3, 4]);
+          c.beginPath();
+          c.moveTo(cx + a.tx * zoom, cy + a.ty * zoom);
+          c.lineTo(cx + b.tx * zoom, cy + b.ty * zoom);
+          c.stroke();
+          c.setLineDash([]);
+        }
+        c.globalAlpha = 1;
+        c.font = '13px -apple-system, "PingFang SC", sans-serif';
+        for (let i = 0; i < this.prepared.length; i++) {
+          const p = this.prepared[i];
+          const x = cx + p.tx * zoom, y = cy + p.ty * zoom;
+          const r = Math.max(2.5, (3 + Math.min(p.linkCount * 0.2, 4)) * 1.4);
+          let fill = p.enabled ? p.heat : this.isDark ? "#1a1a22" : "#ffffff";
+          if (this.isFailed(i)) fill = COL_FAILED;
+          c.beginPath();
+          c.arc(x, y, r, 0, Math.PI * 2);
+          c.fillStyle = fill;
+          c.globalAlpha = p.enabled ? 0.9 : 0.5;
+          c.fill();
+          if (!p.enabled) {
+            c.strokeStyle = "#b0b0b8";
+            c.lineWidth = 1;
+            c.stroke();
+          }
+          if (p.linkCount >= 6) {
+            c.globalAlpha = 0.85;
+            c.fillStyle = this.isDark ? "#c7c7cc" : "#48484d";
+            c.fillText(p.node.id, x + r + 4, y + 4);
+          }
+        }
+        c.globalAlpha = 1;
+        c.fillStyle = this.isDark ? "#e4e4e7" : "#1d1d1f";
+        c.font = '700 22px -apple-system, "PingFang SC", sans-serif';
+        c.fillText("DSH \u63D2\u4EF6\u661F\u5EA7\u56FE", 28, 42);
+        c.font = '13px -apple-system, "PingFang SC", sans-serif';
+        c.fillStyle = this.isDark ? "#a1a1a6" : "#8e8e93";
+        c.fillText(`${this.data.nodes.length} \u63D2\u4EF6 \xB7 ${this.data.links.length} \u4F9D\u8D56 \xB7 ${(/* @__PURE__ */ new Date()).toLocaleString()}`, 28, 66);
+        off.toBlob((blob) => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `dsh-constellation-${Date.now()}.png`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 5e3);
+        }, "image/png");
+      }
+      exportJSON() {
+        const blob = new Blob([JSON.stringify(this.data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `dsh-constellation-${Date.now()}.json`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 5e3);
       }
       setDark(dark) {
         this.isDark = dark;
         this.tooltip.style.background = dark ? "rgba(28,28,34,0.96)" : "rgba(255,255,255,0.96)";
         this.tooltip.style.color = dark ? "#e4e4e7" : "#333";
         this.tooltip.style.borderColor = dark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)";
+        if (this.detailEl && this.state.hoverIndex >= 0) this.showDetail(this.state.hoverIndex);
       }
       dispose() {
         this.state.running = false;
         cancelAnimationFrame(this.raf);
+        this.resizeObs?.disconnect();
+        this.intersectObs?.disconnect();
+        document.removeEventListener("visibilitychange", this.onVisChange);
         this.canvas.remove();
         this.tooltip.remove();
         this.hideDetail();
       }
     };
-    function GraphSection({ t }) {
+    function GraphSection({ t, ctx, onClose }) {
       const hostRef = import_react.default.useRef(null);
       const engineRef = import_react.default.useRef(null);
       const [isDark, setIsDark] = import_react.default.useState(
@@ -723,38 +1296,77 @@ window.__ModuleLoader__.load({
       );
       const [data, setData] = import_react.default.useState(null);
       const [error, setError] = import_react.default.useState(null);
-      import_react.default.useEffect(() => {
-        let cancelled = false;
-        fetch("/dsh-plugin-constellation/graph", { cache: "no-store" }).then((res) => {
+      const [searchQuery, setSearchQuery] = import_react.default.useState("");
+      const [searchInfo, setSearchInfo] = import_react.default.useState({ count: 0, active: 0 });
+      const [layout, setLayout] = import_react.default.useState("ring");
+      const [cats, setCats] = import_react.default.useState([]);
+      const [updatedAt, setUpdatedAt] = import_react.default.useState("");
+      const fetchGraph = import_react.default.useCallback((force = false) => {
+        return fetch(`/dsh-plugin-constellation/graph${force ? "?refresh=1" : ""}`, { cache: "no-store" }).then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
         }).then((d) => {
-          if (!cancelled) setData(d);
+          setData(d);
+          setUpdatedAt((/* @__PURE__ */ new Date()).toLocaleTimeString());
+          setError(null);
+          return d;
         }).catch((e) => {
-          if (!cancelled) setError(e.message);
+          setError(e.message);
         });
-        return () => {
-          cancelled = true;
-        };
       }, []);
       import_react.default.useEffect(() => {
+        fetchGraph();
+      }, [fetchGraph]);
+      import_react.default.useEffect(() => {
         if (!hostRef.current || !data) return;
-        const engine = new ConstellationCanvas(hostRef.current, data);
-        engineRef.current = engine;
-        engine.setDark(isDark);
+        let engine2 = engineRef.current;
+        if (!engine2) {
+          engine2 = new ConstellationCanvas(hostRef.current, data);
+          engineRef.current = engine2;
+          engine2.setDark(isDark);
+        } else {
+          engine2.updateData(data);
+        }
+        const engineRefLocal = engine2;
+        setCats(engine2.getCategories().map((c) => ({ ...c, hidden: engineRefLocal.isCategoryHidden(c.name) })));
         const obs = new MutationObserver(() => {
           const dark = document.body.hasAttribute("data-ds-dark-theme");
           setIsDark(dark);
-          engine.setDark(dark);
+          engineRefLocal.setDark(dark);
         });
         obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
         return () => {
           obs.disconnect();
-          engine.dispose();
+          engineRefLocal.dispose();
           engineRef.current = null;
         };
-      }, [data, isDark]);
-      if (error) {
+      }, [data?.nodes.length, data?.scannedAt]);
+      import_react.default.useEffect(() => {
+        if (!data) return;
+        const tick = async () => {
+          if (document.visibilityState !== "visible") return;
+          const engine2 = engineRef.current;
+          if (!engine2) return;
+          try {
+            const inv = ctx?.remote?.pluginInventory;
+            if (inv && typeof inv.list === "function") {
+              const result = await inv.list();
+              if (result?.ok && Array.isArray(result.value?.entries)) {
+                engine2.refreshStatus(result.value.entries);
+                return;
+              }
+            }
+            throw new Error("remote unavailable");
+          } catch {
+            fetchGraph().then((d) => {
+              if (d) engine2.updateData(d);
+            });
+          }
+        };
+        const timer = window.setInterval(tick, 5e3);
+        return () => window.clearInterval(timer);
+      }, [data, ctx, fetchGraph]);
+      if (error && !data) {
         return import_react.default.createElement("div", {
           style: { padding: 40, color: "#d70015", fontSize: 13 }
         }, `\u52A0\u8F7D\u5931\u8D25: ${error}`);
@@ -764,6 +1376,16 @@ window.__ModuleLoader__.load({
           style: { padding: 40, color: "var(--dsw-alias-fg-muted, #8e8e93)", fontSize: 13 }
         }, "\u52A0\u8F7D\u4E2D\u2026");
       }
+      const engine = engineRef.current;
+      const btnStyle = {
+        border: `1px solid ${isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)"}`,
+        background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.03)",
+        color: isDark ? "#e4e4e7" : "#1d1d1f",
+        borderRadius: 8,
+        padding: "4px 10px",
+        fontSize: 11.5,
+        cursor: "pointer"
+      };
       return import_react.default.createElement(
         "div",
         {
@@ -777,23 +1399,187 @@ window.__ModuleLoader__.load({
             overflow: "hidden"
           }
         },
+        // toolbar
         import_react.default.createElement(
           "div",
-          { style: { padding: "12px 18px 8px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 } },
+          { style: { padding: "10px 18px 6px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flexShrink: 0 } },
           import_react.default.createElement("span", { style: { fontWeight: 700, fontSize: 15, color: isDark ? "#f0f0f2" : "#1d1d1f" } }, t("overlay.title")),
-          import_react.default.createElement("span", { style: { fontSize: 11, color: isDark ? "#707078" : "#a1a1a6" } }, `${data.nodes.length} \u63D2\u4EF6 \xB7 ${data.links.length} \u4F9D\u8D56`)
+          import_react.default.createElement("span", { style: { fontSize: 11, color: isDark ? "#707078" : "#a1a1a6" } }, `${data.nodes.length} \u63D2\u4EF6 \xB7 ${data.links.length} \u4F9D\u8D56${updatedAt ? ` \xB7 ${updatedAt}` : ""}`),
+          import_react.default.createElement("input", {
+            value: searchQuery,
+            placeholder: t("search.placeholder"),
+            onChange: (e) => {
+              const q = e.target.value;
+              setSearchQuery(q);
+              if (engine) {
+                engine.setSearch(q);
+                setSearchInfo(engine.getSearchState());
+              }
+            },
+            onKeyDown: (e) => {
+              if (e.key === "Enter" && engine) {
+                engine.nextMatch(e.shiftKey ? -1 : 1);
+                setSearchInfo(engine.getSearchState());
+              }
+            },
+            style: {
+              marginLeft: "auto",
+              width: 200,
+              padding: "4px 10px",
+              fontSize: 12,
+              borderRadius: 8,
+              border: `1px solid ${isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)"}`,
+              background: isDark ? "rgba(255,255,255,0.06)" : "#fff",
+              color: isDark ? "#e4e4e7" : "#1d1d1f",
+              outline: "none"
+            }
+          }),
+          searchInfo.count > 0 ? import_react.default.createElement("span", { style: { fontSize: 11, color: "#5ac8fa", minWidth: 34 } }, `${searchInfo.active}/${searchInfo.count}`) : null,
+          import_react.default.createElement("button", {
+            style: btnStyle,
+            onClick: () => {
+              const next = layout === "ring" ? "force" : "ring";
+              setLayout(next);
+              engine?.setLayout(next);
+            }
+          }, layout === "ring" ? t("layout.force") : t("layout.ring")),
+          import_react.default.createElement("button", { style: btnStyle, onClick: () => engine?.exportPNG() }, t("export.png")),
+          import_react.default.createElement("button", { style: btnStyle, onClick: () => engine?.exportJSON() }, t("export.json")),
+          import_react.default.createElement("button", { style: btnStyle, onClick: () => fetchGraph(true).then((d) => {
+            if (d && engine) engine.updateData(d);
+          }) }, t("action.refresh")),
+          onClose ? import_react.default.createElement("button", {
+            style: { ...btnStyle, borderColor: "rgba(255,69,58,0.4)", color: "#ff453a" },
+            onClick: onClose
+          }, "\xD7") : null
+        ),
+        // category chips
+        import_react.default.createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              flexWrap: "wrap",
+              padding: "0 18px 8px",
+              flexShrink: 0,
+              maxHeight: 60,
+              overflowY: "auto"
+            }
+          },
+          cats.some((c) => c.hidden) ? import_react.default.createElement("button", {
+            key: "__all",
+            style: { ...btnStyle, padding: "2px 8px", fontSize: 10.5 },
+            onClick: () => {
+              const eng = engineRef.current;
+              if (!eng) return;
+              for (const c of cats) eng.setCategoryHidden(c.name, false);
+              setCats((prev) => prev.map((c) => ({ ...c, hidden: false })));
+            }
+          }, t("category.showAll")) : null,
+          cats.map((c) => import_react.default.createElement(
+            "button",
+            {
+              key: c.name,
+              title: `${c.name} (${c.count})`,
+              onClick: () => {
+                const eng = engineRef.current;
+                if (!eng) return;
+                const hidden = !eng.isCategoryHidden(c.name);
+                eng.setCategoryHidden(c.name, hidden);
+                setCats((prev) => prev.map((x) => x.name === c.name ? { ...x, hidden } : x));
+              },
+              style: {
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "2px 8px",
+                fontSize: 10.5,
+                borderRadius: 999,
+                cursor: "pointer",
+                border: `1px solid ${c.hidden ? "transparent" : c.color + "55"}`,
+                background: c.hidden ? "transparent" : c.color + "1a",
+                color: c.hidden ? isDark ? "#707078" : "#a1a1a6" : isDark ? "#e4e4e7" : "#1d1d1f",
+                textDecoration: c.hidden ? "line-through" : "none"
+              }
+            },
+            import_react.default.createElement("span", { style: { width: 7, height: 7, borderRadius: "50%", background: c.color, opacity: c.hidden ? 0.35 : 1 } }),
+            `${c.name} ${c.count}`
+          ))
         ),
         import_react.default.createElement("div", {
           ref: hostRef,
           style: { flex: 1, position: "relative", overflow: "hidden", minHeight: 420 }
-        })
+        }),
+        error ? import_react.default.createElement("div", { style: { position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", fontSize: 11, color: "#ff9f0a" } }, `\u72B6\u6001\u5237\u65B0\u5931\u8D25: ${error}`) : null
       );
+    }
+    function useIsDark() {
+      const [dark, setDark] = import_react.default.useState(
+        typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
+      );
+      import_react.default.useEffect(() => {
+        const obs = new MutationObserver(() => setDark(document.body.hasAttribute("data-ds-dark-theme")));
+        obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+        return () => obs.disconnect();
+      }, []);
+      return dark;
+    }
+    function FooterGraphButton(_props) {
+      const [open, setOpen] = import_react.default.useState(false);
+      const isDark = useIsDark();
+      if (!open) {
+        return import_react.default.createElement("button", {
+          title: "\u63D2\u4EF6\u661F\u5EA7\u56FE",
+          onClick: () => setOpen(true),
+          style: {
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            cursor: "pointer",
+            fontSize: 15,
+            lineHeight: 1,
+            border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
+            background: "transparent"
+          }
+        }, "\u{1FA90}");
+      }
+      return import_react.default.createElement(
+        "div",
+        {
+          style: {
+            position: "fixed",
+            inset: 0,
+            zIndex: 9e3,
+            background: isDark ? "rgba(10,10,14,0.82)" : "rgba(240,240,245,0.85)",
+            backdropFilter: "blur(14px)",
+            display: "flex",
+            flexDirection: "column",
+            padding: "24px 28px"
+          },
+          onClick: (e) => {
+            if (e.target === e.currentTarget) setOpen(false);
+          }
+        },
+        import_react.default.createElement(
+          "div",
+          { style: { flex: 1, minHeight: 0, position: "relative", borderRadius: 14, overflow: "hidden", boxShadow: "0 24px 80px rgba(0,0,0,0.28)", background: isDark ? "#0f0f14" : "#fff" } },
+          import_react.default.createElement(GraphSectionStub, { onClose: () => setOpen(false) })
+        )
+      );
+    }
+    var applyCtxRef = null;
+    function GraphSectionStub({ onClose }) {
+      const ref = applyCtxRef || { t: (k) => zh[k], ctx: null };
+      return import_react.default.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose });
     }
     var inject = ["slots", "locale"];
     function apply(ctx) {
       const NS = "dsh-plugin-constellation";
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-plugin-constellation: dictionaries");
       const t = ctx.locale.bind(NS);
+      applyCtxRef = { t, ctx };
       ctx.slots.inject(
         "settings.section",
         () => ctx.slots.register({
@@ -803,8 +1589,22 @@ window.__ModuleLoader__.load({
           label: () => t("nav.label"),
           locale: NS,
           inject: () => ({})
-        }, () => import_react.default.createElement(GraphSection, { t }))
+        }, () => import_react.default.createElement(GraphSection, { t, ctx }))
       );
+      try {
+        ctx.slots.inject(
+          "sidebar.footer.action",
+          () => ctx.slots.register({
+            name: "sidebar.footer.action",
+            id: "dsh-plugin-constellation",
+            order: 50,
+            label: () => t("footer.tooltip"),
+            locale: NS,
+            inject: () => ({})
+          }, () => import_react.default.createElement(FooterGraphButton, {}))
+        );
+      } catch {
+      }
     }
     
     return module.exports;

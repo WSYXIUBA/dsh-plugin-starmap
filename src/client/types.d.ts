@@ -20,6 +20,9 @@ declare module "@deepseek-ai/dsh-client-ui-slots" {
       label: string;
     };
     "shell.overlay": unknown;
+    "sidebar.footer.action": {
+      wide: boolean;
+    };
   }
 }
 

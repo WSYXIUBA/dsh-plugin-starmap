@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-constellation",
   "description": "DSH 插件星座图 — 侧边栏/设置入口打开依赖关系图，自动分类 + 真实依赖关系网 · Plugin constellation graph for DeepSeek Harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -54,7 +54,8 @@
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-theme"
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-ui-sidebar"
       ],
       "platform": "web",
       "immediately": true
