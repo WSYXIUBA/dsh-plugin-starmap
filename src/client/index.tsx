@@ -31,10 +31,10 @@ export type GraphKey =
   | "rel.profile";
 
 export const zh: Record<GraphKey, string> = {
-  "nav.label": "星座图设置",
-  "overlay.title": "插件关系星座图",
+  "nav.label": "星图设置",
+  "overlay.title": "插件关系星图",
   "overlay.hint": "滚动缩放 · 拖拽平移 · 双击聚焦 · 点击详情 · 右键菜单",
-  "footer.tooltip": "打开插件星座图",
+  "footer.tooltip": "打开插件星图",
   "search.placeholder": "搜索插件… (Enter 跳转)",
   "layout.ring": "分类环布局",
   "layout.force": "力导向布局",
@@ -53,7 +53,7 @@ export const zh: Record<GraphKey, string> = {
   "settings.bgImageClear": "清除图片",
   "settings.bgImageHint": "支持 PNG / JPG / WebP / GIF，≤ 12MB，铺满窗口显示",
   "settings.preview": "预览（棋盘格代表透明）",
-  "settings.hint": "设置即时保存，通过侧边栏底部的 🪐 按钮打开星座图查看效果。",
+  "settings.hint": "设置即时保存，通过侧边栏底部的 🪐 按钮打开星图查看效果。",
   "rel.npm": "npm 依赖",
   "rel.service": "服务注入",
   "rel.client": "客户端模块",
@@ -158,7 +158,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/* ── vanilla constellation renderer ── */
+/* ── vanilla starmap renderer ── */
 class ConstellationCanvas {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -1400,7 +1400,7 @@ class ConstellationCanvas {
     // title + stats
     c.fillStyle = this.isDark ? "#e4e4e7" : "#1d1d1f";
     c.font = '700 22px -apple-system, "PingFang SC", sans-serif';
-    c.fillText("DSH 插件星座图", 28, 42);
+    c.fillText("DSH 插件星图", 28, 42);
     c.font = '13px -apple-system, "PingFang SC", sans-serif';
     c.fillStyle = this.isDark ? "#a1a1a6" : "#8e8e93";
     c.fillText(`${this.data.nodes.length} 插件 · ${this.data.links.length} 依赖 · ${new Date().toLocaleString()}`, 28, 66);
@@ -1409,7 +1409,7 @@ class ConstellationCanvas {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `dsh-constellation-${Date.now()}.png`;
+      a.download = `dsh-starmap-${Date.now()}.png`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     }, "image/png");
@@ -1420,7 +1420,7 @@ class ConstellationCanvas {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `dsh-constellation-${Date.now()}.json`;
+    a.download = `dsh-starmap-${Date.now()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
@@ -1483,7 +1483,7 @@ const DEFAULT_SETTINGS: ConstellationSettings = { bgColor: "auto", bgOpacity: 1,
 
 async function fetchSettings(): Promise<ConstellationSettings> {
   try {
-    const res = await fetch("/dsh-plugin-constellation/settings", { cache: "no-store" });
+    const res = await fetch("/dsh-plugin-starmap/settings", { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     // A stale host process has no /settings route and lets the SPA fallback
     // answer index.html — treat that as "defaults until restart".
@@ -1504,7 +1504,7 @@ async function fetchSettings(): Promise<ConstellationSettings> {
 const STALE_HOST_MSG = "宿主尚未加载新版插件 — 请完全退出 DSH Desktop（含托盘进程）后重新启动";
 
 async function saveSettingsPartial(patch: Record<string, unknown>): Promise<ConstellationSettings> {
-  const res = await fetch("/dsh-plugin-constellation/settings", {
+  const res = await fetch("/dsh-plugin-starmap/settings", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(patch),
@@ -1556,7 +1556,7 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
   const [updatedAt, setUpdatedAt] = React.useState<string>("");
 
   const fetchGraph = React.useCallback((force = false) => {
-    return fetch(`/dsh-plugin-constellation/graph${force ? "?refresh=1" : ""}`, { cache: "no-store" })
+    return fetch(`/dsh-plugin-starmap/graph${force ? "?refresh=1" : ""}`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<GraphData>;
@@ -1832,7 +1832,7 @@ function FooterGraphButton(_props: unknown) {
   }, [open, settings.blur]);
 
   const button = React.createElement("button", {
-    title: "插件星座图",
+    title: "插件星图",
     onClick: () => setOpen(true),
     style: {
       width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 15, lineHeight: 1,
@@ -1880,7 +1880,7 @@ function FooterGraphButton(_props: unknown) {
         style: {
           position: "absolute", inset: 0, zIndex: 0,
           backgroundColor: effectiveBgColor(settings, isDark),
-          backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : undefined,
+          backgroundImage: settings.hasImage ? "url(/dsh-plugin-starmap/bg)" : undefined,
           backgroundSize: "cover",
           backgroundPosition: "center",
           opacity: settings.bgOpacity,
@@ -2062,7 +2062,7 @@ function SettingsSection({ t }: { t: (k: GraphKey) => string }) {
           style: {
             position: "absolute", inset: 0,
             backgroundColor: effColor,
-            backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : undefined,
+            backgroundImage: settings.hasImage ? "url(/dsh-plugin-starmap/bg)" : undefined,
             backgroundSize: "cover", backgroundPosition: "center",
             opacity: settings.bgOpacity,
             backdropFilter: settings.blur > 0 ? `blur(${settings.blur}px) saturate(1.15)` : undefined,
@@ -2089,8 +2089,8 @@ let applyCtxRef: { t: (k: GraphKey) => string; ctx: any } | null = null;
 export const inject = ["slots", "locale"] as const;
 
 export function apply(ctx: Context): void {
-  const NS = "dsh-plugin-constellation";
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-plugin-constellation: dictionaries");
+  const NS = "dsh-plugin-starmap";
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-plugin-starmap: dictionaries");
   const t = ctx.locale.bind(NS);
   applyCtxRef = { t, ctx };
 
@@ -2099,7 +2099,7 @@ export function apply(ctx: Context): void {
   ctx.slots.inject("settings.section", () =>
     ctx.slots.register({
       name: "settings.section",
-      id: "dsh-plugin-constellation",
+      id: "dsh-plugin-starmap",
       order: 35,
       label: () => t("nav.label"),
       locale: NS,
@@ -2112,7 +2112,7 @@ export function apply(ctx: Context): void {
     ctx.slots.inject("sidebar.footer.action", () =>
       ctx.slots.register({
         name: "sidebar.footer.action",
-        id: "dsh-plugin-constellation",
+        id: "dsh-plugin-starmap",
         order: 50,
         label: () => t("footer.tooltip"),
         locale: NS,

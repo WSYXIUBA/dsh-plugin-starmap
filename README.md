@@ -1,16 +1,16 @@
-# dsh-plugin-constellation
+# dsh-plugin-starmap
 
-🪐 DSH 插件星座图 —— DeepSeek Harness 插件依赖关系可视化。
+🪐 DSH 插件星图 —— DeepSeek Harness 插件依赖关系可视化。
 
-在设置面板（“星座图设置”）里自定义**背景颜色 / 背景图片 / 背景透明度**，通过侧边栏底部 🪐 按钮打开居中弹窗查看星座图——背景可半透明直接透视主页，画布自带缓动视差星空。
+在设置面板（“星图设置”）里自定义**背景颜色 / 背景图片 / 背景透明度**，通过侧边栏底部 🪐 按钮打开居中弹窗查看星图——背景可半透明直接透视主页，画布自带缓动视差星空。
 
 ## 功能
 
-### 设置（设置面板 → 星座图设置）
+### 设置（设置面板 → 星图设置）
 - **背景颜色**：取色器自选，或"自动（跟随主题）"——深色主题深空靛蓝 `#0d1326`、浅色主题雾霭淡蓝 `#e9eef8`（刻意不用纯黑/纯白）
 - **背景图片**：PNG / JPG / WebP / GIF（≤12MB），铺满窗口，与颜色叠加
 - **背景透明度**：0–100% 滑杆，调低可直接透视主页，0 为完全透明；棋盘格实时预览
-- 设置持久化在 `~/.dsh/dsh-plugin-constellation/settings.json`，即时保存
+- 设置持久化在 `~/.dsh/dsh-plugin-starmap/settings.json`，即时保存
 
 ### 可视化
 - **四类关系线**：npm 依赖（package.json deps/peer，实线）· 服务注入（Cordis `inject=[…]`，点线连向 ⚙服务枢纽）· 客户端模块（`dsh.client.inject`，虚线）· Profile 归属（bundle 成员，灰线）；工具栏可按类型开关
@@ -41,13 +41,13 @@
 ## 安装
 
 ```bash
-dsh plugin --profile desktop add github:WSYXIUBA/dsh-plugin-constellation
+dsh plugin --profile desktop add github:WSYXIUBA/dsh-plugin-starmap
 ```
 
 ## 使用
 
-1. **打开星座图**：点击侧边栏底部 🪐 按钮，居中弹窗展示（Esc / 点遮罩关闭）
-2. **自定义背景**：设置 → 星座图设置 → 颜色 / 图片 / 透明度，即时生效
+1. **打开星图**：点击侧边栏底部 🪐 按钮，居中弹窗展示（Esc / 点遮罩关闭）
+2. **自定义背景**：设置 → 星图设置 → 颜色 / 图片 / 透明度，即时生效
 3. 工具栏：搜索框 / 布局切换 / 导出 PNG / 导出 JSON / 刷新
 4. 分类标签条：点击隐藏/显示分类
 5. 节点交互：悬停看摘要、点击看详情、双击聚焦、右键快捷操作
@@ -68,7 +68,7 @@ node deploy.mjs      # 同步构建产物到本机 profile（开发调试用）
 src/
   index.ts           # host 半侧：动态 profile 枚举 + node_modules 扫描 + 依赖图 + 孤儿检测 + HTTP 路由（mtime 缓存）
   client/
-    index.tsx        # client 半侧：设置入口 + 侧边栏入口 + Canvas 星座图渲染 + 搜索/布局/导出/影响分析
+    index.tsx        # client 半侧：设置入口 + 侧边栏入口 + Canvas 星图渲染 + 搜索/布局/导出/影响分析
 build.mjs            # 构建脚本（tsc host + esbuild client）
 verify-scan.mjs      # 扫描逻辑离线验证（镜像 host 实现）
 deploy.mjs           # 开发部署脚本

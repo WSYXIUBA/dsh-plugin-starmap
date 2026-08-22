@@ -1,4 +1,4 @@
 # dsh bundle patch: inserts this plugin into a profile's layer stack.
 - insert:
-    - id: dsh-plugin-constellation
-      name: 'dsh-plugin-constellation'
+    - id: dsh-plugin-starmap
+      name: 'dsh-plugin-starmap'

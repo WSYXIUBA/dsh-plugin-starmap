@@ -1,4 +1,4 @@
-export declare const name = "dsh-plugin-constellation";
+export declare const name = "dsh-plugin-starmap";
 export declare const inject: string[];
 export type FiberPhase = "pending" | "loading" | "active" | "failed" | "unloading" | null;
 export type RelationType = "deps" | "peer" | "service" | "client" | "profile";

@@ -1,23 +1,23 @@
 {
-  "name": "dsh-plugin-constellation",
-  "description": "DSH 插件星座图 — 侧边栏/设置入口打开依赖关系图，自动分类 + 真实依赖关系网 · Plugin constellation graph for DeepSeek Harness",
-  "version": "0.4.0",
+  "name": "dsh-plugin-starmap",
+  "description": "DSH 插件星图 — 侧边栏/设置入口打开依赖关系图，自动分类 + 真实依赖关系网 · Plugin starmap graph for DeepSeek Harness",
+  "version": "0.5.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WSYXIUBA/dsh-plugin-constellation.git"
+    "url": "git+https://github.com/WSYXIUBA/dsh-plugin-starmap.git"
   },
-  "homepage": "https://github.com/WSYXIUBA/dsh-plugin-constellation",
+  "homepage": "https://github.com/WSYXIUBA/dsh-plugin-starmap",
   "keywords": [
     "deepseek",
     "harness",
     "dsh",
     "dsh-plugin",
     "graph",
-    "constellation",
+    "starmap",
     "dependency"
   ],
   "scripts": {

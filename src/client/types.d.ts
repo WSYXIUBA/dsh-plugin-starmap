@@ -12,7 +12,7 @@ declare module "@deepseek-ai/cordis" {
 /* ── Slot map augmentation ── */
 declare module "@deepseek-ai/dsh-client-ui-slots" {
   interface LocaleNamespaceMap {
-    "dsh-plugin-constellation": GraphKey;
+    "dsh-plugin-starmap": GraphKey;
   }
   interface SlotMap {
     "settings.section": {

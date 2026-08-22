@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: "dsh-plugin-constellation",
+  id: "dsh-plugin-starmap",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -45,10 +45,10 @@ window.__ModuleLoader__.load({
     var import_react = __toESM(require("react"), 1);
     var import_react_dom = require("react-dom");
     var zh = {
-      "nav.label": "\u661F\u5EA7\u56FE\u8BBE\u7F6E",
-      "overlay.title": "\u63D2\u4EF6\u5173\u7CFB\u661F\u5EA7\u56FE",
+      "nav.label": "\u661F\u56FE\u8BBE\u7F6E",
+      "overlay.title": "\u63D2\u4EF6\u5173\u7CFB\u661F\u56FE",
       "overlay.hint": "\u6EDA\u52A8\u7F29\u653E \xB7 \u62D6\u62FD\u5E73\u79FB \xB7 \u53CC\u51FB\u805A\u7126 \xB7 \u70B9\u51FB\u8BE6\u60C5 \xB7 \u53F3\u952E\u83DC\u5355",
-      "footer.tooltip": "\u6253\u5F00\u63D2\u4EF6\u661F\u5EA7\u56FE",
+      "footer.tooltip": "\u6253\u5F00\u63D2\u4EF6\u661F\u56FE",
       "search.placeholder": "\u641C\u7D22\u63D2\u4EF6\u2026 (Enter \u8DF3\u8F6C)",
       "layout.ring": "\u5206\u7C7B\u73AF\u5E03\u5C40",
       "layout.force": "\u529B\u5BFC\u5411\u5E03\u5C40",
@@ -67,7 +67,7 @@ window.__ModuleLoader__.load({
       "settings.bgImageClear": "\u6E05\u9664\u56FE\u7247",
       "settings.bgImageHint": "\u652F\u6301 PNG / JPG / WebP / GIF\uFF0C\u2264 12MB\uFF0C\u94FA\u6EE1\u7A97\u53E3\u663E\u793A",
       "settings.preview": "\u9884\u89C8\uFF08\u68CB\u76D8\u683C\u4EE3\u8868\u900F\u660E\uFF09",
-      "settings.hint": "\u8BBE\u7F6E\u5373\u65F6\u4FDD\u5B58\uFF0C\u901A\u8FC7\u4FA7\u8FB9\u680F\u5E95\u90E8\u7684 \u{1FA90} \u6309\u94AE\u6253\u5F00\u661F\u5EA7\u56FE\u67E5\u770B\u6548\u679C\u3002",
+      "settings.hint": "\u8BBE\u7F6E\u5373\u65F6\u4FDD\u5B58\uFF0C\u901A\u8FC7\u4FA7\u8FB9\u680F\u5E95\u90E8\u7684 \u{1FA90} \u6309\u94AE\u6253\u5F00\u661F\u56FE\u67E5\u770B\u6548\u679C\u3002",
       "rel.npm": "npm \u4F9D\u8D56",
       "rel.service": "\u670D\u52A1\u6CE8\u5165",
       "rel.client": "\u5BA2\u6237\u7AEF\u6A21\u5757",
@@ -1375,7 +1375,7 @@ window.__ModuleLoader__.load({
         c.globalAlpha = 1;
         c.fillStyle = this.isDark ? "#e4e4e7" : "#1d1d1f";
         c.font = '700 22px -apple-system, "PingFang SC", sans-serif';
-        c.fillText("DSH \u63D2\u4EF6\u661F\u5EA7\u56FE", 28, 42);
+        c.fillText("DSH \u63D2\u4EF6\u661F\u56FE", 28, 42);
         c.font = '13px -apple-system, "PingFang SC", sans-serif';
         c.fillStyle = this.isDark ? "#a1a1a6" : "#8e8e93";
         c.fillText(`${this.data.nodes.length} \u63D2\u4EF6 \xB7 ${this.data.links.length} \u4F9D\u8D56 \xB7 ${(/* @__PURE__ */ new Date()).toLocaleString()}`, 28, 66);
@@ -1384,7 +1384,7 @@ window.__ModuleLoader__.load({
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = `dsh-constellation-${Date.now()}.png`;
+          a.download = `dsh-starmap-${Date.now()}.png`;
           a.click();
           setTimeout(() => URL.revokeObjectURL(url), 5e3);
         }, "image/png");
@@ -1394,7 +1394,7 @@ window.__ModuleLoader__.load({
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `dsh-constellation-${Date.now()}.json`;
+        a.download = `dsh-starmap-${Date.now()}.json`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 5e3);
       }
@@ -1441,7 +1441,7 @@ window.__ModuleLoader__.load({
     var DEFAULT_SETTINGS = { bgColor: "auto", bgOpacity: 1, blur: 12, hasImage: false };
     async function fetchSettings() {
       try {
-        const res = await fetch("/dsh-plugin-constellation/settings", { cache: "no-store" });
+        const res = await fetch("/dsh-plugin-starmap/settings", { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const ct = res.headers.get("content-type") || "";
         if (!ct.includes("application/json")) return { ...DEFAULT_SETTINGS };
@@ -1458,7 +1458,7 @@ window.__ModuleLoader__.load({
     }
     var STALE_HOST_MSG = "\u5BBF\u4E3B\u5C1A\u672A\u52A0\u8F7D\u65B0\u7248\u63D2\u4EF6 \u2014 \u8BF7\u5B8C\u5168\u9000\u51FA DSH Desktop\uFF08\u542B\u6258\u76D8\u8FDB\u7A0B\uFF09\u540E\u91CD\u65B0\u542F\u52A8";
     async function saveSettingsPartial(patch) {
-      const res = await fetch("/dsh-plugin-constellation/settings", {
+      const res = await fetch("/dsh-plugin-starmap/settings", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(patch)
@@ -1496,7 +1496,7 @@ window.__ModuleLoader__.load({
       const [relHidden, setRelHidden] = import_react.default.useState({});
       const [updatedAt, setUpdatedAt] = import_react.default.useState("");
       const fetchGraph = import_react.default.useCallback((force = false) => {
-        return fetch(`/dsh-plugin-constellation/graph${force ? "?refresh=1" : ""}`, { cache: "no-store" }).then((res) => {
+        return fetch(`/dsh-plugin-starmap/graph${force ? "?refresh=1" : ""}`, { cache: "no-store" }).then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
         }).then((d) => {
@@ -1765,7 +1765,7 @@ window.__ModuleLoader__.load({
         };
       }, [open, settings.blur]);
       const button = import_react.default.createElement("button", {
-        title: "\u63D2\u4EF6\u661F\u5EA7\u56FE",
+        title: "\u63D2\u4EF6\u661F\u56FE",
         onClick: () => setOpen(true),
         style: {
           width: 30,
@@ -1823,7 +1823,7 @@ window.__ModuleLoader__.load({
               inset: 0,
               zIndex: 0,
               backgroundColor: effectiveBgColor(settings, isDark),
-              backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : void 0,
+              backgroundImage: settings.hasImage ? "url(/dsh-plugin-starmap/bg)" : void 0,
               backgroundSize: "cover",
               backgroundPosition: "center",
               opacity: settings.bgOpacity,
@@ -2039,7 +2039,7 @@ window.__ModuleLoader__.load({
                 position: "absolute",
                 inset: 0,
                 backgroundColor: effColor,
-                backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : void 0,
+                backgroundImage: settings.hasImage ? "url(/dsh-plugin-starmap/bg)" : void 0,
                 backgroundSize: "cover",
                 backgroundPosition: "center",
                 opacity: settings.bgOpacity,
@@ -2064,15 +2064,15 @@ window.__ModuleLoader__.load({
     var applyCtxRef = null;
     var inject = ["slots", "locale"];
     function apply(ctx) {
-      const NS = "dsh-plugin-constellation";
-      ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-plugin-constellation: dictionaries");
+      const NS = "dsh-plugin-starmap";
+      ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-plugin-starmap: dictionaries");
       const t = ctx.locale.bind(NS);
       applyCtxRef = { t, ctx };
       ctx.slots.inject(
         "settings.section",
         () => ctx.slots.register({
           name: "settings.section",
-          id: "dsh-plugin-constellation",
+          id: "dsh-plugin-starmap",
           order: 35,
           label: () => t("nav.label"),
           locale: NS,
@@ -2084,7 +2084,7 @@ window.__ModuleLoader__.load({
           "sidebar.footer.action",
           () => ctx.slots.register({
             name: "sidebar.footer.action",
-            id: "dsh-plugin-constellation",
+            id: "dsh-plugin-starmap",
             order: 50,
             label: () => t("footer.tooltip"),
             locale: NS,

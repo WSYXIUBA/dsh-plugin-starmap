@@ -1,5 +1,5 @@
 /**
- * dsh-plugin-constellation host entry.
+ * dsh-plugin-starmap host entry.
  *
  * Builds the plugin graph by scanning the profiles' node_modules for ALL
  * packages (official @deepseek-ai plugins + any third-party plugins the user
@@ -19,16 +19,16 @@
  * bundles list is the authoritative source for "what is a user-installed
  * plugin", so future third-party plugins are classified without code changes.
  *
- * Data exposed as JSON HTTP route `/dsh-plugin-constellation/graph` via host
+ * Data exposed as JSON HTTP route `/dsh-plugin-starmap/graph` via host
  * webServer (dshmarket-style host→client bridge), with mtime-keyed caching.
  *
  * NOTE: no default export — the Cordis loader unwraps `exports.default ?? exports`
  * and would drop named exports if a default were present.
  */
-import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const name = "dsh-plugin-constellation";
+export const name = "dsh-plugin-starmap";
 export const inject = ["webServer", "loader", "pluginInventory"];
 
 /* ── graph data model ── */
@@ -505,7 +505,7 @@ function cacheKey(profilesRoot: string): string {
   return parts.join("|");
 }
 
-/* ── plugin settings (persisted under ~/.dsh/dsh-plugin-constellation) ── */
+/* ── plugin settings (persisted under ~/.dsh/dsh-plugin-starmap) ── */
 interface PluginSettings {
   /** "auto" (follow theme) or a #rrggbb color */
   bgColor: string;
@@ -519,10 +519,27 @@ interface PluginSettings {
 
 function settingsDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "";
-  return join(home, ".dsh", "dsh-plugin-constellation");
+  return join(home, ".dsh", "dsh-plugin-starmap");
+}
+
+/** one-time migration from the pre-rename directory (constellation → starmap) */
+function migrateOldSettings(): void {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const oldDir = join(home, ".dsh", "dsh-plugin-constellation");
+  const newDir = settingsDir();
+  if (existsSync(join(newDir, "settings.json"))) return;
+  try {
+    if (!existsSync(join(oldDir, "settings.json"))) return;
+    mkdirSync(newDir, { recursive: true });
+    copyFileSync(join(oldDir, "settings.json"), join(newDir, "settings.json"));
+    if (existsSync(join(oldDir, "bg-image.bin"))) {
+      copyFileSync(join(oldDir, "bg-image.bin"), join(newDir, "bg-image.bin"));
+    }
+  } catch { /* migration is best-effort */ }
 }
 
 function loadSettings(): PluginSettings {
+  migrateOldSettings();
   try {
     const s = JSON.parse(readFileSync(join(settingsDir(), "settings.json"), "utf-8"));
     return {
@@ -583,7 +600,7 @@ export function apply(ctx: any): void {
 
         disposers.push(hostCtx.webServer.register({
           kind: "exact",
-          path: "/dsh-plugin-constellation/graph",
+          path: "/dsh-plugin-starmap/graph",
           handler: (request: any, response: any) => {
             if (request.method !== "GET") {
               response.writeHead(405, { allow: "GET" });
@@ -610,7 +627,7 @@ export function apply(ctx: any): void {
         // GET current settings / POST partial updates {bgColor?, bgOpacity?, blur?, bgImage?}
         disposers.push(hostCtx.webServer.register({
           kind: "exact",
-          path: "/dsh-plugin-constellation/settings",
+          path: "/dsh-plugin-starmap/settings",
           handler: async (request: any, response: any) => {
             try {
               if (request.method === "GET") {
@@ -651,7 +668,7 @@ export function apply(ctx: any): void {
         // background image binary
         disposers.push(hostCtx.webServer.register({
           kind: "exact",
-          path: "/dsh-plugin-constellation/bg",
+          path: "/dsh-plugin-starmap/bg",
           handler: (request: any, response: any) => {
             if (request.method !== "GET") {
               response.writeHead(405, { allow: "GET" });
@@ -683,7 +700,7 @@ export function apply(ctx: any): void {
           }
         };
       },
-      "dsh-plugin-constellation: http routes"
+      "dsh-plugin-starmap: http routes"
     );
   });
 }

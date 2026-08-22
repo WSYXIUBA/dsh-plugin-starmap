@@ -1,5 +1,5 @@
 /**
- * Build script for dsh-plugin-constellation.
+ * Build script for dsh-plugin-starmap.
  * - host side: tsc emit to lib/ (Cordis loader entry, no default export)
  * - client side: esbuild bundle → client/client.js wrapped in __ModuleLoader__ shell
  */
@@ -45,7 +45,7 @@ const result = await build({
 });
 
 const code = result.outputFiles[0].text;
-const shell = `window.__ModuleLoader__.load({\n  id: "dsh-plugin-constellation",\n  factory: (require) => {\n    var module = { exports: {} };\n    var exports = module.exports;\n    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });\n` +
+const shell = `window.__ModuleLoader__.load({\n  id: "dsh-plugin-starmap",\n  factory: (require) => {\n    var module = { exports: {} };\n    var exports = module.exports;\n    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });\n` +
   code.split("\n").map((l) => `    ${l}`).join("\n") +
   `\n    return module.exports;\n  }\n});\n`;
 
