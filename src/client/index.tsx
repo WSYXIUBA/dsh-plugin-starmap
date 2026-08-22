@@ -17,6 +17,8 @@ export type GraphKey =
   | "settings.bgAuto"
   | "settings.bgOpacity"
   | "settings.bgOpacityHint"
+  | "settings.blur"
+  | "settings.blurHint"
   | "settings.bgImage"
   | "settings.bgImagePick"
   | "settings.bgImageClear"
@@ -40,6 +42,8 @@ export const zh: Record<GraphKey, string> = {
   "settings.bgAuto": "自动（跟随主题）",
   "settings.bgOpacity": "背景不透明度",
   "settings.bgOpacityHint": "调低可透视主页；0 为完全透明",
+  "settings.blur": "背景模糊度",
+  "settings.blurHint": "毛玻璃：模糊透过来的主页内容，降低信息干扰；背景不透明度低于 100% 时生效",
   "settings.bgImage": "背景图片",
   "settings.bgImagePick": "选择图片…",
   "settings.bgImageClear": "清除图片",
@@ -64,6 +68,8 @@ export const en: Record<GraphKey, string> = {
   "settings.bgAuto": "Auto (follow theme)",
   "settings.bgOpacity": "Background opacity",
   "settings.bgOpacityHint": "Lower to see through to the home page; 0 = fully transparent",
+  "settings.blur": "Background blur",
+  "settings.blurHint": "Frosted glass: blurs the home page showing through, reducing visual noise; visible below 100% opacity",
   "settings.bgImage": "Background image",
   "settings.bgImagePick": "Choose image…",
   "settings.bgImageClear": "Clear image",
@@ -1377,10 +1383,11 @@ const THEME_BG_LIGHT = "#e9eef8";
 export interface ConstellationSettings {
   bgColor: string; // "auto" | #rrggbb
   bgOpacity: number; // 0–1
+  blur: number; // px, 0–40
   hasImage: boolean;
 }
 
-const DEFAULT_SETTINGS: ConstellationSettings = { bgColor: "auto", bgOpacity: 1, hasImage: false };
+const DEFAULT_SETTINGS: ConstellationSettings = { bgColor: "auto", bgOpacity: 1, blur: 12, hasImage: false };
 
 async function fetchSettings(): Promise<ConstellationSettings> {
   try {
@@ -1713,21 +1720,27 @@ function FooterGraphButton(_props: unknown) {
         style: {
           width: "min(1400px, 92vw)", height: "min(880px, 88vh)",
           borderRadius: 16, overflow: "hidden",
-          boxShadow: "0 32px 90px rgba(0,0,0,0.38)",
+          // layered "thickness": contact shadow + mid projection + deep ambient
+          boxShadow: isDark
+            ? "0 2px 6px rgba(0,0,0,0.35), 0 18px 46px rgba(0,0,0,0.42), 0 48px 120px rgba(0,0,0,0.55)"
+            : "0 2px 6px rgba(30,34,50,0.14), 0 18px 46px rgba(30,34,50,0.20), 0 48px 120px rgba(30,34,50,0.34)",
+          border: `1px solid ${isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.55)"}`,
           display: "flex", flexDirection: "column",
           position: "relative",
-          isolation: "isolate",
         },
       },
-      // background layer: user color/image, faded by bgOpacity
+      // background layer: frosted blur of the home page behind + user color /
+      // image faded by bgOpacity. NOTE: no `isolation` on the card — an
+      // isolated stacking context would cut backdrop-filter off from the page.
       React.createElement("div", {
         style: {
-          position: "absolute", inset: 0, zIndex: -1,
+          position: "absolute", inset: 0, zIndex: 0,
           backgroundColor: effectiveBgColor(settings, isDark),
           backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : undefined,
           backgroundSize: "cover",
           backgroundPosition: "center",
           opacity: settings.bgOpacity,
+          backdropFilter: settings.blur > 0 ? `blur(${settings.blur}px) saturate(1.15)` : undefined,
         },
       }),
       React.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose: () => setOpen(false) })
@@ -1870,6 +1883,28 @@ function SettingsSection({ t }: { t: (k: GraphKey) => string }) {
       React.createElement("div", { style: hintStyle }, t("settings.bgOpacityHint")),
     ),
 
+    // background blur (frosted glass)
+    React.createElement("div", { style: cardStyle },
+      React.createElement("div", { style: labelStyle },
+        `${t("settings.blur")} · ${settings.blur}px`),
+      React.createElement("input", {
+        type: "range", min: 0, max: 40, step: 1,
+        value: settings.blur,
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+          const v = Number(e.target.value);
+          setSettings((prev) => ({ ...prev, blur: v }));
+        },
+        onMouseUp: (e: React.MouseEvent<HTMLInputElement>) => {
+          void patch({ blur: Number((e.target as HTMLInputElement).value) });
+        },
+        onTouchEnd: (e: React.TouchEvent<HTMLInputElement>) => {
+          void patch({ blur: Number((e.target as HTMLInputElement).value) });
+        },
+        style: { width: "100%", accentColor: "#5ac8fa" },
+      }),
+      React.createElement("div", { style: hintStyle }, t("settings.blurHint")),
+    ),
+
     // preview: checkerboard behind the color/image layer at the set opacity
     React.createElement("div", { style: cardStyle },
       React.createElement("div", { style: labelStyle }, t("settings.preview")),
@@ -1886,6 +1921,7 @@ function SettingsSection({ t }: { t: (k: GraphKey) => string }) {
             backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : undefined,
             backgroundSize: "cover", backgroundPosition: "center",
             opacity: settings.bgOpacity,
+            backdropFilter: settings.blur > 0 ? `blur(${settings.blur}px) saturate(1.15)` : undefined,
           },
         }),
         React.createElement("div", {

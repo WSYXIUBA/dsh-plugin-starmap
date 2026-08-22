@@ -354,6 +354,8 @@ interface PluginSettings {
   bgColor: string;
   /** 0–1, 0 = fully transparent modal background */
   bgOpacity: number;
+  /** frosted-glass blur radius in px, 0–40 */
+  blur: number;
   /** mime type of the stored background image, null when none */
   imageMime: string | null;
 }
@@ -369,10 +371,11 @@ function loadSettings(): PluginSettings {
     return {
       bgColor: s.bgColor === "auto" || /^#[0-9a-fA-F]{6}$/.test(s.bgColor) ? s.bgColor : "auto",
       bgOpacity: typeof s.bgOpacity === "number" ? Math.max(0, Math.min(1, s.bgOpacity)) : 1,
+      blur: typeof s.blur === "number" ? Math.max(0, Math.min(40, s.blur)) : 12,
       imageMime: typeof s.imageMime === "string" ? s.imageMime : null,
     };
   } catch {
-    return { bgColor: "auto", bgOpacity: 1, imageMime: null };
+    return { bgColor: "auto", bgOpacity: 1, blur: 12, imageMime: null };
   }
 }
 
@@ -381,9 +384,9 @@ function saveSettings(s: PluginSettings): void {
   writeFileSync(join(settingsDir(), "settings.json"), JSON.stringify(s, null, 2));
 }
 
-function settingsView(): { bgColor: string; bgOpacity: number; hasImage: boolean } {
+function settingsView(): { bgColor: string; bgOpacity: number; blur: number; hasImage: boolean } {
   const s = loadSettings();
-  return { bgColor: s.bgColor, bgOpacity: s.bgOpacity, hasImage: s.imageMime !== null && existsSync(join(settingsDir(), "bg-image.bin")) };
+  return { bgColor: s.bgColor, bgOpacity: s.bgOpacity, blur: s.blur, hasImage: s.imageMime !== null && existsSync(join(settingsDir(), "bg-image.bin")) };
 }
 
 function readBody(request: any, limit = 12 * 1024 * 1024): Promise<Buffer> {
@@ -468,6 +471,7 @@ export function apply(ctx: any): void {
                 if (body.bgColor === "auto" || /^#[0-9a-fA-F]{6}$/.test(body.bgColor)) s.bgColor = body.bgColor;
               }
               if (typeof body.bgOpacity === "number") s.bgOpacity = Math.max(0, Math.min(1, body.bgOpacity));
+              if (typeof body.blur === "number") s.blur = Math.max(0, Math.min(40, body.blur));
               if (body.bgImage !== undefined) {
                 if (body.bgImage === null) {
                   s.imageMime = null;

@@ -60,6 +60,8 @@ window.__ModuleLoader__.load({
       "settings.bgAuto": "\u81EA\u52A8\uFF08\u8DDF\u968F\u4E3B\u9898\uFF09",
       "settings.bgOpacity": "\u80CC\u666F\u4E0D\u900F\u660E\u5EA6",
       "settings.bgOpacityHint": "\u8C03\u4F4E\u53EF\u900F\u89C6\u4E3B\u9875\uFF1B0 \u4E3A\u5B8C\u5168\u900F\u660E",
+      "settings.blur": "\u80CC\u666F\u6A21\u7CCA\u5EA6",
+      "settings.blurHint": "\u6BDB\u73BB\u7483\uFF1A\u6A21\u7CCA\u900F\u8FC7\u6765\u7684\u4E3B\u9875\u5185\u5BB9\uFF0C\u964D\u4F4E\u4FE1\u606F\u5E72\u6270\uFF1B\u80CC\u666F\u4E0D\u900F\u660E\u5EA6\u4F4E\u4E8E 100% \u65F6\u751F\u6548",
       "settings.bgImage": "\u80CC\u666F\u56FE\u7247",
       "settings.bgImagePick": "\u9009\u62E9\u56FE\u7247\u2026",
       "settings.bgImageClear": "\u6E05\u9664\u56FE\u7247",
@@ -83,6 +85,8 @@ window.__ModuleLoader__.load({
       "settings.bgAuto": "Auto (follow theme)",
       "settings.bgOpacity": "Background opacity",
       "settings.bgOpacityHint": "Lower to see through to the home page; 0 = fully transparent",
+      "settings.blur": "Background blur",
+      "settings.blurHint": "Frosted glass: blurs the home page showing through, reducing visual noise; visible below 100% opacity",
       "settings.bgImage": "Background image",
       "settings.bgImagePick": "Choose image\u2026",
       "settings.bgImageClear": "Clear image",
@@ -1352,7 +1356,7 @@ window.__ModuleLoader__.load({
     };
     var THEME_BG_DARK = "#0d1326";
     var THEME_BG_LIGHT = "#e9eef8";
-    var DEFAULT_SETTINGS = { bgColor: "auto", bgOpacity: 1, hasImage: false };
+    var DEFAULT_SETTINGS = { bgColor: "auto", bgOpacity: 1, blur: 12, hasImage: false };
     async function fetchSettings() {
       try {
         const res = await fetch("/dsh-plugin-constellation/settings", { cache: "no-store" });
@@ -1667,24 +1671,28 @@ window.__ModuleLoader__.load({
               height: "min(880px, 88vh)",
               borderRadius: 16,
               overflow: "hidden",
-              boxShadow: "0 32px 90px rgba(0,0,0,0.38)",
+              // layered "thickness": contact shadow + mid projection + deep ambient
+              boxShadow: isDark ? "0 2px 6px rgba(0,0,0,0.35), 0 18px 46px rgba(0,0,0,0.42), 0 48px 120px rgba(0,0,0,0.55)" : "0 2px 6px rgba(30,34,50,0.14), 0 18px 46px rgba(30,34,50,0.20), 0 48px 120px rgba(30,34,50,0.34)",
+              border: `1px solid ${isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.55)"}`,
               display: "flex",
               flexDirection: "column",
-              position: "relative",
-              isolation: "isolate"
+              position: "relative"
             }
           },
-          // background layer: user color/image, faded by bgOpacity
+          // background layer: frosted blur of the home page behind + user color /
+          // image faded by bgOpacity. NOTE: no `isolation` on the card — an
+          // isolated stacking context would cut backdrop-filter off from the page.
           import_react.default.createElement("div", {
             style: {
               position: "absolute",
               inset: 0,
-              zIndex: -1,
+              zIndex: 0,
               backgroundColor: effectiveBgColor(settings, isDark),
               backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : void 0,
               backgroundSize: "cover",
               backgroundPosition: "center",
-              opacity: settings.bgOpacity
+              opacity: settings.bgOpacity,
+              backdropFilter: settings.blur > 0 ? `blur(${settings.blur}px) saturate(1.15)` : void 0
             }
           }),
           import_react.default.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose: () => setOpen(false) })
@@ -1846,6 +1854,35 @@ window.__ModuleLoader__.load({
           }),
           import_react.default.createElement("div", { style: hintStyle }, t("settings.bgOpacityHint"))
         ),
+        // background blur (frosted glass)
+        import_react.default.createElement(
+          "div",
+          { style: cardStyle },
+          import_react.default.createElement(
+            "div",
+            { style: labelStyle },
+            `${t("settings.blur")} \xB7 ${settings.blur}px`
+          ),
+          import_react.default.createElement("input", {
+            type: "range",
+            min: 0,
+            max: 40,
+            step: 1,
+            value: settings.blur,
+            onChange: (e) => {
+              const v = Number(e.target.value);
+              setSettings((prev) => ({ ...prev, blur: v }));
+            },
+            onMouseUp: (e) => {
+              void patch({ blur: Number(e.target.value) });
+            },
+            onTouchEnd: (e) => {
+              void patch({ blur: Number(e.target.value) });
+            },
+            style: { width: "100%", accentColor: "#5ac8fa" }
+          }),
+          import_react.default.createElement("div", { style: hintStyle }, t("settings.blurHint"))
+        ),
         // preview: checkerboard behind the color/image layer at the set opacity
         import_react.default.createElement(
           "div",
@@ -1870,7 +1907,8 @@ window.__ModuleLoader__.load({
                 backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : void 0,
                 backgroundSize: "cover",
                 backgroundPosition: "center",
-                opacity: settings.bgOpacity
+                opacity: settings.bgOpacity,
+                backdropFilter: settings.blur > 0 ? `blur(${settings.blur}px) saturate(1.15)` : void 0
               }
             }),
             import_react.default.createElement("div", {
