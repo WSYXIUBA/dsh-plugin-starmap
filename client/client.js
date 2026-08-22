@@ -1331,6 +1331,7 @@ window.__ModuleLoader__.load({
       import_react.default.useEffect(() => {
         fetchGraph();
       }, [fetchGraph]);
+      if (data) dataRef.current = data;
       const hasData = data !== null;
       import_react.default.useEffect(() => {
         if (!hostRef.current || !dataRef.current) return;

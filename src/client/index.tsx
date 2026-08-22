@@ -1348,6 +1348,10 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
     fetchGraph();
   }, [fetchGraph]);
 
+  // Ref must be current BEFORE effects run on the data-arrival commit, or the
+  // engine-creation effect below sees null and never creates the canvas.
+  if (data) dataRef.current = data;
+
   const hasData = data !== null;
 
   // Engine lifecycle: created exactly once per mount (first data arrival).
