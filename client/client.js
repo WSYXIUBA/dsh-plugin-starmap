@@ -1357,17 +1357,21 @@ window.__ModuleLoader__.load({
       try {
         const res = await fetch("/dsh-plugin-constellation/settings", { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const ct = res.headers.get("content-type") || "";
+        if (!ct.includes("application/json")) return { ...DEFAULT_SETTINGS };
         return await res.json();
       } catch {
         return { ...DEFAULT_SETTINGS };
       }
     }
+    var STALE_HOST_MSG = "\u5BBF\u4E3B\u5C1A\u672A\u52A0\u8F7D\u65B0\u7248\u63D2\u4EF6 \u2014 \u8BF7\u5B8C\u5168\u9000\u51FA DSH Desktop\uFF08\u542B\u6258\u76D8\u8FDB\u7A0B\uFF09\u540E\u91CD\u65B0\u542F\u52A8";
     async function saveSettingsPartial(patch) {
       const res = await fetch("/dsh-plugin-constellation/settings", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(patch)
       });
+      if (res.status === 404 || res.status === 405) throw new Error(STALE_HOST_MSG);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     }

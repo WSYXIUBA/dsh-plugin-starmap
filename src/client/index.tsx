@@ -1386,11 +1386,17 @@ async function fetchSettings(): Promise<ConstellationSettings> {
   try {
     const res = await fetch("/dsh-plugin-constellation/settings", { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // A stale host process has no /settings route and lets the SPA fallback
+    // answer index.html — treat that as "defaults until restart".
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) return { ...DEFAULT_SETTINGS };
     return await res.json() as ConstellationSettings;
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
 }
+
+const STALE_HOST_MSG = "宿主尚未加载新版插件 — 请完全退出 DSH Desktop（含托盘进程）后重新启动";
 
 async function saveSettingsPartial(patch: Record<string, unknown>): Promise<ConstellationSettings> {
   const res = await fetch("/dsh-plugin-constellation/settings", {
@@ -1398,6 +1404,10 @@ async function saveSettingsPartial(patch: Record<string, unknown>): Promise<Cons
     headers: { "content-type": "application/json" },
     body: JSON.stringify(patch),
   });
+  // 404/405 = the SPA fallback answered because the running host process
+  // still has the old plugin (no /settings route). Host code only loads at
+  // process start, so only a full app restart picks it up.
+  if (res.status === 404 || res.status === 405) throw new Error(STALE_HOST_MSG);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json() as ConstellationSettings;
 }
