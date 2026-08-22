@@ -12,10 +12,20 @@ export type GraphKey =
   | "export.png"
   | "export.json"
   | "action.refresh"
-  | "category.showAll";
+  | "category.showAll"
+  | "settings.bgColor"
+  | "settings.bgAuto"
+  | "settings.bgOpacity"
+  | "settings.bgOpacityHint"
+  | "settings.bgImage"
+  | "settings.bgImagePick"
+  | "settings.bgImageClear"
+  | "settings.bgImageHint"
+  | "settings.preview"
+  | "settings.hint";
 
 export const zh: Record<GraphKey, string> = {
-  "nav.label": "插件星座图",
+  "nav.label": "星座图设置",
   "overlay.title": "插件关系星座图",
   "overlay.hint": "滚动缩放 · 拖拽平移 · 双击聚焦 · 点击详情 · 右键菜单",
   "footer.tooltip": "打开插件星座图",
@@ -26,10 +36,20 @@ export const zh: Record<GraphKey, string> = {
   "export.json": "导出 JSON",
   "action.refresh": "刷新",
   "category.showAll": "全部显示",
+  "settings.bgColor": "背景颜色",
+  "settings.bgAuto": "自动（跟随主题）",
+  "settings.bgOpacity": "背景不透明度",
+  "settings.bgOpacityHint": "调低可透视主页；0 为完全透明",
+  "settings.bgImage": "背景图片",
+  "settings.bgImagePick": "选择图片…",
+  "settings.bgImageClear": "清除图片",
+  "settings.bgImageHint": "支持 PNG / JPG / WebP / GIF，≤ 12MB，铺满窗口显示",
+  "settings.preview": "预览（棋盘格代表透明）",
+  "settings.hint": "设置即时保存，通过侧边栏底部的 🪐 按钮打开星座图查看效果。",
 };
 
 export const en: Record<GraphKey, string> = {
-  "nav.label": "Plugin Graph",
+  "nav.label": "Constellation Settings",
   "overlay.title": "Plugin Constellation Graph",
   "overlay.hint": "Scroll to zoom · Drag to pan · Double-click to focus · Click for details · Right-click menu",
   "footer.tooltip": "Open plugin graph",
@@ -40,6 +60,16 @@ export const en: Record<GraphKey, string> = {
   "export.json": "Export JSON",
   "action.refresh": "Refresh",
   "category.showAll": "Show all",
+  "settings.bgColor": "Background color",
+  "settings.bgAuto": "Auto (follow theme)",
+  "settings.bgOpacity": "Background opacity",
+  "settings.bgOpacityHint": "Lower to see through to the home page; 0 = fully transparent",
+  "settings.bgImage": "Background image",
+  "settings.bgImagePick": "Choose image…",
+  "settings.bgImageClear": "Clear image",
+  "settings.bgImageHint": "PNG / JPG / WebP / GIF, up to 12MB, cover-fit",
+  "settings.preview": "Preview (checkerboard = transparency)",
+  "settings.hint": "Saved instantly — open the graph via the 🪐 button at the sidebar foot.",
 };
 
 /* ── graph data types (mirror host) ── */
@@ -116,6 +146,8 @@ class ConstellationCanvas {
   };
   private raf = 0;
   private isDark = false;
+  private transparent = false;
+  private stars: Array<{ x: number; y: number; r: number; ph: number; sp: number; a: number }> = [];
   private resizeObs: ResizeObserver | null = null;
   private intersectObs: IntersectionObserver | null = null;
   private menuEl: HTMLElement | null = null;
@@ -207,6 +239,21 @@ class ConstellationCanvas {
     });
 
     this.computeForceLayout();
+
+    // parallax starfield (screen-space, deterministic)
+    this.stars = [];
+    for (let i = 0; i < 140; i++) {
+      const h1 = this.hashStr(`star-${i}-x`);
+      const h2 = this.hashStr(`star-${i}-y`);
+      this.stars.push({
+        x: ((h1 >>> 8) % 10000) / 10000,
+        y: ((h2 >>> 8) % 10000) / 10000,
+        r: 0.5 + ((h1 >>> 4) % 100) / 100 * 1.3,
+        ph: ((h2 >>> 2) % 628) / 100,
+        sp: 0.4 + ((h1 >>> 6) % 100) / 100 * 1.4,
+        a: 0.25 + ((h2 >>> 4) % 100) / 100 * 0.55,
+      });
+    }
 
     // link indices + per-direction adjacency (O(1) lookups for hover/detail)
     this.linksIdx = [];
@@ -408,12 +455,15 @@ class ConstellationCanvas {
     const margin = 60;
     const ctx = this.ctx;
 
+    const time = (typeof performance !== "undefined" ? performance.now() : 0) / 1000;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = this.isDark ? "#0f0f14" : "#ffffff";
-    ctx.fillRect(0, 0, W, H);
-
-    const time = (typeof performance !== "undefined" ? performance.now() : 0) / 1000;
+    if (this.transparent) {
+      this.drawStars(ctx, time);
+    } else {
+      ctx.fillStyle = this.isDark ? "#0f0f14" : "#ffffff";
+      ctx.fillRect(0, 0, W, H);
+    }
     const prepared = this.prepared;
 
     // position easing toward layout targets + gentle drift
@@ -1285,6 +1335,28 @@ class ConstellationCanvas {
     if (this.detailEl && this.state.hoverIndex >= 0) this.showDetail(this.state.hoverIndex);
   }
 
+  /** transparent mode: the canvas stops painting its own background so the
+      modal's color/image layer shows through; a parallax starfield is drawn. */
+  setTransparent(v: boolean) {
+    this.transparent = v;
+  }
+
+  private drawStars(ctx: CanvasRenderingContext2D, time: number) {
+    const { W, H, panX, panY } = this.state;
+    const rgb = this.isDark ? "255,255,255" : "92,104,138";
+    ctx.fillStyle = `rgb(${rgb})`;
+    for (const s of this.stars) {
+      const sx = ((((s.x * W + panX * 0.18) % W) + W) % W);
+      const sy = ((((s.y * H + panY * 0.18) % H) + H) % H);
+      const tw = 0.55 + 0.45 * Math.sin(time * s.sp + s.ph);
+      ctx.globalAlpha = s.a * tw;
+      ctx.beginPath();
+      ctx.arc(sx, sy, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   dispose() {
     this.state.running = false;
     cancelAnimationFrame(this.raf);
@@ -1295,6 +1367,44 @@ class ConstellationCanvas {
     this.tooltip.remove();
     this.hideDetail();
   }
+}
+
+/* Theme-following default background colors — deliberately not pure black or
+   pure white: deep-space indigo for dark, misty pale blue for light. */
+const THEME_BG_DARK = "#0d1326";
+const THEME_BG_LIGHT = "#e9eef8";
+
+export interface ConstellationSettings {
+  bgColor: string; // "auto" | #rrggbb
+  bgOpacity: number; // 0–1
+  hasImage: boolean;
+}
+
+const DEFAULT_SETTINGS: ConstellationSettings = { bgColor: "auto", bgOpacity: 1, hasImage: false };
+
+async function fetchSettings(): Promise<ConstellationSettings> {
+  try {
+    const res = await fetch("/dsh-plugin-constellation/settings", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json() as ConstellationSettings;
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+async function saveSettingsPartial(patch: Record<string, unknown>): Promise<ConstellationSettings> {
+  const res = await fetch("/dsh-plugin-constellation/settings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json() as ConstellationSettings;
+}
+
+function effectiveBgColor(s: ConstellationSettings, isDark: boolean): string {
+  if (s.bgColor === "auto") return isDark ? THEME_BG_DARK : THEME_BG_LIGHT;
+  return s.bgColor;
 }
 
 /* ── React components ── */
@@ -1361,6 +1471,7 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
     if (!hostRef.current || !dataRef.current) return;
     const engine = new ConstellationCanvas(hostRef.current, dataRef.current);
     engineRef.current = engine;
+    engine.setTransparent(true);
     engine.setDark(document.body.hasAttribute("data-ds-dark-theme"));
     setCats(engine.getCategories().map((c) => ({ ...c, hidden: engine.isCategoryHidden(c.name) })));
     return () => {
@@ -1545,13 +1656,17 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
 /* Sidebar footer action: 🪐 button that opens the graph as a centered modal
    window. The modal is portaled to document.body — NOT rendered inside the
    sidebar subtree — so theme effects that create stacking contexts on sidebar
-   containers (e.g. aqua mica mode transforms) cannot trap it in the rail. */
+   containers (e.g. aqua mica mode transforms) cannot trap it in the rail.
+   The card background is the user-configurable color/image with adjustable
+   opacity; the graph canvas itself renders transparently on top of it. */
 function FooterGraphButton(_props: unknown) {
   const [open, setOpen] = React.useState(false);
   const isDark = useIsDark();
+  const [settings, setSettings] = React.useState<ConstellationSettings>({ ...DEFAULT_SETTINGS });
 
   React.useEffect(() => {
     if (!open) return;
+    fetchSettings().then(setSettings);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -1575,7 +1690,7 @@ function FooterGraphButton(_props: unknown) {
     {
       style: {
         position: "fixed", inset: 0, zIndex: 10000,
-        background: isDark ? "rgba(0,0,0,0.5)" : "rgba(80,80,90,0.32)",
+        background: isDark ? "rgba(0,0,0,0.42)" : "rgba(80,80,90,0.22)",
         display: "flex", alignItems: "center", justifyContent: "center",
       },
       onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1588,15 +1703,193 @@ function FooterGraphButton(_props: unknown) {
         style: {
           width: "min(1400px, 92vw)", height: "min(880px, 88vh)",
           borderRadius: 16, overflow: "hidden",
-          background: isDark ? "#14141a" : "#ffffff",
           boxShadow: "0 32px 90px rgba(0,0,0,0.38)",
           display: "flex", flexDirection: "column",
+          position: "relative",
+          isolation: "isolate",
         },
       },
+      // background layer: user color/image, faded by bgOpacity
+      React.createElement("div", {
+        style: {
+          position: "absolute", inset: 0, zIndex: -1,
+          backgroundColor: effectiveBgColor(settings, isDark),
+          backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : undefined,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          opacity: settings.bgOpacity,
+        },
+      }),
       React.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose: () => setOpen(false) })
     )
   );
   return [button, createPortal(modal, document.body)];
+}
+
+/* Settings section: plugin background preferences (color / image / opacity). */
+function SettingsSection({ t }: { t: (k: GraphKey) => string }) {
+  const isDark = useIsDark();
+  const [settings, setSettings] = React.useState<ConstellationSettings>({ ...DEFAULT_SETTINGS });
+  const [loaded, setLoaded] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    fetchSettings().then((s) => { setSettings(s); setLoaded(true); });
+  }, []);
+
+  const patch = React.useCallback(async (p: Record<string, unknown>) => {
+    try {
+      const next = await saveSettingsPartial(p);
+      setSettings(next);
+      setError(null);
+    } catch (e) {
+      setError(String((e as Error).message || e));
+    }
+  }, []);
+
+  const onPickImage = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") void patch({ bgImage: reader.result });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  if (!loaded) {
+    return React.createElement("div", {
+      style: { padding: 40, color: "var(--dsw-alias-fg-muted, #8e8e93)", fontSize: 13 },
+    }, "加载中…");
+  }
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 12, fontWeight: 600,
+    color: isDark ? "#e4e4e7" : "#1d1d1f",
+    marginBottom: 8,
+  };
+  const hintStyle: React.CSSProperties = {
+    fontSize: 11, color: isDark ? "#8e8e93" : "#8e8e93", lineHeight: 1.6, marginTop: 6,
+  };
+  const cardStyle: React.CSSProperties = {
+    background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)",
+    border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"}`,
+    borderRadius: 12, padding: 16, marginBottom: 14,
+  };
+  const inputColor = isDark ? "#e4e4e7" : "#1d1d1f";
+  const btnStyle: React.CSSProperties = {
+    border: `1px solid ${isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)"}`,
+    background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.03)",
+    color: inputColor, borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer",
+  };
+
+  const effColor = effectiveBgColor(settings, isDark);
+  const checkerboard =
+    "repeating-conic-gradient(rgba(128,128,128,0.22) 0% 25%, transparent 0% 50%) 50% / 16px 16px";
+
+  return React.createElement("div", { style: { padding: "20px 24px", maxWidth: 640, overflowY: "auto" } },
+    React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: inputColor, marginBottom: 4 } }, t("nav.label")),
+    React.createElement("div", { style: { ...hintStyle, marginTop: 0, marginBottom: 16 } }, t("settings.hint")),
+
+    // background color
+    React.createElement("div", { style: cardStyle },
+      React.createElement("div", { style: labelStyle }, t("settings.bgColor")),
+      React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+        React.createElement("input", {
+          type: "color",
+          value: settings.bgColor === "auto" ? effColor : settings.bgColor,
+          onChange: (e: React.ChangeEvent<HTMLInputElement>) => void patch({ bgColor: e.target.value }),
+          style: { width: 42, height: 30, border: "none", background: "transparent", cursor: "pointer", padding: 0 },
+        }),
+        React.createElement("span", {
+          style: { fontFamily: "monospace", fontSize: 12, color: isDark ? "#a8a8b0" : "#6e6e73", minWidth: 72 },
+        }, settings.bgColor === "auto" ? t("settings.bgAuto") : settings.bgColor.toUpperCase()),
+        React.createElement("button", {
+          style: { ...btnStyle, ...(settings.bgColor === "auto" ? { borderColor: "#5ac8fa", color: "#5ac8fa" } : {}) },
+          onClick: () => void patch({ bgColor: "auto" }),
+        }, t("settings.bgAuto")),
+      ),
+      React.createElement("div", { style: hintStyle }, `${t("settings.bgAuto")}: ${THEME_BG_DARK} / ${THEME_BG_LIGHT}`),
+    ),
+
+    // background image
+    React.createElement("div", { style: cardStyle },
+      React.createElement("div", { style: labelStyle }, t("settings.bgImage")),
+      React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+        React.createElement("label", { style: btnStyle },
+          t("settings.bgImagePick"),
+          React.createElement("input", {
+            type: "file",
+            accept: "image/*",
+            style: { display: "none" },
+            onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+              onPickImage(e.target.files?.[0]);
+              e.target.value = "";
+            },
+          }),
+        ),
+        settings.hasImage ? React.createElement("button", {
+          style: { ...btnStyle, color: "#ff453a", borderColor: "rgba(255,69,58,0.4)" },
+          onClick: () => void patch({ bgImage: null }),
+        }, t("settings.bgImageClear")) : null,
+        settings.hasImage ? React.createElement("span", {
+          style: { fontSize: 11, color: "#34c759" },
+        }, "✓") : null,
+      ),
+      React.createElement("div", { style: hintStyle }, t("settings.bgImageHint")),
+    ),
+
+    // background opacity
+    React.createElement("div", { style: cardStyle },
+      React.createElement("div", { style: labelStyle },
+        `${t("settings.bgOpacity")} · ${Math.round(settings.bgOpacity * 100)}%`),
+      React.createElement("input", {
+        type: "range", min: 0, max: 100, step: 5,
+        value: Math.round(settings.bgOpacity * 100),
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+          const v = Number(e.target.value) / 100;
+          setSettings((prev) => ({ ...prev, bgOpacity: v }));
+        },
+        onMouseUp: (e: React.MouseEvent<HTMLInputElement>) => {
+          void patch({ bgOpacity: Number((e.target as HTMLInputElement).value) / 100 });
+        },
+        onTouchEnd: (e: React.TouchEvent<HTMLInputElement>) => {
+          void patch({ bgOpacity: Number((e.target as HTMLInputElement).value) / 100 });
+        },
+        style: { width: "100%", accentColor: "#5ac8fa" },
+      }),
+      React.createElement("div", { style: hintStyle }, t("settings.bgOpacityHint")),
+    ),
+
+    // preview: checkerboard behind the color/image layer at the set opacity
+    React.createElement("div", { style: cardStyle },
+      React.createElement("div", { style: labelStyle }, t("settings.preview")),
+      React.createElement("div", {
+        style: {
+          height: 110, borderRadius: 10, overflow: "hidden",
+          background: checkerboard, position: "relative",
+        },
+      },
+        React.createElement("div", {
+          style: {
+            position: "absolute", inset: 0,
+            backgroundColor: effColor,
+            backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : undefined,
+            backgroundSize: "cover", backgroundPosition: "center",
+            opacity: settings.bgOpacity,
+          },
+        }),
+        React.createElement("div", {
+          style: {
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 26,
+          },
+        }, "🪐✨"),
+      ),
+    ),
+
+    error ? React.createElement("div", { style: { color: "#ff453a", fontSize: 12, marginTop: 4 } }, `保存失败: ${error}`) : null,
+  );
 }
 
 /* Bridge for the modal: t/ctx registered by apply(). */
@@ -1611,8 +1904,8 @@ export function apply(ctx: Context): void {
   const t = ctx.locale.bind(NS);
   applyCtxRef = { t, ctx };
 
-  // settings navigation entry (above 插件市场, order 35 < 40); clicking it
-  // shows the graph inline in the settings content area (dshmarket-style).
+  // settings navigation entry: plugin background preferences (the graph itself
+  // lives in the 🪐 modal from the sidebar footer action).
   ctx.slots.inject("settings.section", () =>
     ctx.slots.register({
       name: "settings.section",
@@ -1621,7 +1914,7 @@ export function apply(ctx: Context): void {
       label: () => t("nav.label"),
       locale: NS,
       inject: () => ({}),
-    }, () => React.createElement(GraphSection, { t, ctx }))
+    }, () => React.createElement(SettingsSection, { t }))
   );
 
   // sidebar footer action: quick-launch the graph as a fullscreen overlay.

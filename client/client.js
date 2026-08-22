@@ -45,7 +45,7 @@ window.__ModuleLoader__.load({
     var import_react = __toESM(require("react"), 1);
     var import_react_dom = require("react-dom");
     var zh = {
-      "nav.label": "\u63D2\u4EF6\u661F\u5EA7\u56FE",
+      "nav.label": "\u661F\u5EA7\u56FE\u8BBE\u7F6E",
       "overlay.title": "\u63D2\u4EF6\u5173\u7CFB\u661F\u5EA7\u56FE",
       "overlay.hint": "\u6EDA\u52A8\u7F29\u653E \xB7 \u62D6\u62FD\u5E73\u79FB \xB7 \u53CC\u51FB\u805A\u7126 \xB7 \u70B9\u51FB\u8BE6\u60C5 \xB7 \u53F3\u952E\u83DC\u5355",
       "footer.tooltip": "\u6253\u5F00\u63D2\u4EF6\u661F\u5EA7\u56FE",
@@ -55,10 +55,20 @@ window.__ModuleLoader__.load({
       "export.png": "\u5BFC\u51FA PNG",
       "export.json": "\u5BFC\u51FA JSON",
       "action.refresh": "\u5237\u65B0",
-      "category.showAll": "\u5168\u90E8\u663E\u793A"
+      "category.showAll": "\u5168\u90E8\u663E\u793A",
+      "settings.bgColor": "\u80CC\u666F\u989C\u8272",
+      "settings.bgAuto": "\u81EA\u52A8\uFF08\u8DDF\u968F\u4E3B\u9898\uFF09",
+      "settings.bgOpacity": "\u80CC\u666F\u4E0D\u900F\u660E\u5EA6",
+      "settings.bgOpacityHint": "\u8C03\u4F4E\u53EF\u900F\u89C6\u4E3B\u9875\uFF1B0 \u4E3A\u5B8C\u5168\u900F\u660E",
+      "settings.bgImage": "\u80CC\u666F\u56FE\u7247",
+      "settings.bgImagePick": "\u9009\u62E9\u56FE\u7247\u2026",
+      "settings.bgImageClear": "\u6E05\u9664\u56FE\u7247",
+      "settings.bgImageHint": "\u652F\u6301 PNG / JPG / WebP / GIF\uFF0C\u2264 12MB\uFF0C\u94FA\u6EE1\u7A97\u53E3\u663E\u793A",
+      "settings.preview": "\u9884\u89C8\uFF08\u68CB\u76D8\u683C\u4EE3\u8868\u900F\u660E\uFF09",
+      "settings.hint": "\u8BBE\u7F6E\u5373\u65F6\u4FDD\u5B58\uFF0C\u901A\u8FC7\u4FA7\u8FB9\u680F\u5E95\u90E8\u7684 \u{1FA90} \u6309\u94AE\u6253\u5F00\u661F\u5EA7\u56FE\u67E5\u770B\u6548\u679C\u3002"
     };
     var en = {
-      "nav.label": "Plugin Graph",
+      "nav.label": "Constellation Settings",
       "overlay.title": "Plugin Constellation Graph",
       "overlay.hint": "Scroll to zoom \xB7 Drag to pan \xB7 Double-click to focus \xB7 Click for details \xB7 Right-click menu",
       "footer.tooltip": "Open plugin graph",
@@ -68,7 +78,17 @@ window.__ModuleLoader__.load({
       "export.png": "Export PNG",
       "export.json": "Export JSON",
       "action.refresh": "Refresh",
-      "category.showAll": "Show all"
+      "category.showAll": "Show all",
+      "settings.bgColor": "Background color",
+      "settings.bgAuto": "Auto (follow theme)",
+      "settings.bgOpacity": "Background opacity",
+      "settings.bgOpacityHint": "Lower to see through to the home page; 0 = fully transparent",
+      "settings.bgImage": "Background image",
+      "settings.bgImagePick": "Choose image\u2026",
+      "settings.bgImageClear": "Clear image",
+      "settings.bgImageHint": "PNG / JPG / WebP / GIF, up to 12MB, cover-fit",
+      "settings.preview": "Preview (checkerboard = transparency)",
+      "settings.hint": "Saved instantly \u2014 open the graph via the \u{1FA90} button at the sidebar foot."
     };
     var COL_FAILED = "#ff453a";
     var COL_LOADING = "#ff9f0a";
@@ -123,6 +143,8 @@ window.__ModuleLoader__.load({
       };
       raf = 0;
       isDark = false;
+      transparent = false;
+      stars = [];
       resizeObs = null;
       intersectObs = null;
       menuEl = null;
@@ -226,6 +248,19 @@ window.__ModuleLoader__.load({
           };
         });
         this.computeForceLayout();
+        this.stars = [];
+        for (let i = 0; i < 140; i++) {
+          const h1 = this.hashStr(`star-${i}-x`);
+          const h2 = this.hashStr(`star-${i}-y`);
+          this.stars.push({
+            x: (h1 >>> 8) % 1e4 / 1e4,
+            y: (h2 >>> 8) % 1e4 / 1e4,
+            r: 0.5 + (h1 >>> 4) % 100 / 100 * 1.3,
+            ph: (h2 >>> 2) % 628 / 100,
+            sp: 0.4 + (h1 >>> 6) % 100 / 100 * 1.4,
+            a: 0.25 + (h2 >>> 4) % 100 / 100 * 0.55
+          });
+        }
         this.linksIdx = [];
         this.byNode = /* @__PURE__ */ new Map();
         this.byNodeOut = /* @__PURE__ */ new Map();
@@ -425,11 +460,15 @@ window.__ModuleLoader__.load({
         const cy = H / 2 + panY;
         const margin = 60;
         const ctx = this.ctx;
+        const time = (typeof performance !== "undefined" ? performance.now() : 0) / 1e3;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, W, H);
-        ctx.fillStyle = this.isDark ? "#0f0f14" : "#ffffff";
-        ctx.fillRect(0, 0, W, H);
-        const time = (typeof performance !== "undefined" ? performance.now() : 0) / 1e3;
+        if (this.transparent) {
+          this.drawStars(ctx, time);
+        } else {
+          ctx.fillStyle = this.isDark ? "#0f0f14" : "#ffffff";
+          ctx.fillRect(0, 0, W, H);
+        }
         const prepared = this.prepared;
         const screenX = new Float32Array(prepared.length);
         const screenY = new Float32Array(prepared.length);
@@ -1280,6 +1319,26 @@ window.__ModuleLoader__.load({
         this.tooltip.style.borderColor = dark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)";
         if (this.detailEl && this.state.hoverIndex >= 0) this.showDetail(this.state.hoverIndex);
       }
+      /** transparent mode: the canvas stops painting its own background so the
+          modal's color/image layer shows through; a parallax starfield is drawn. */
+      setTransparent(v) {
+        this.transparent = v;
+      }
+      drawStars(ctx, time) {
+        const { W, H, panX, panY } = this.state;
+        const rgb = this.isDark ? "255,255,255" : "92,104,138";
+        ctx.fillStyle = `rgb(${rgb})`;
+        for (const s of this.stars) {
+          const sx = ((s.x * W + panX * 0.18) % W + W) % W;
+          const sy = ((s.y * H + panY * 0.18) % H + H) % H;
+          const tw = 0.55 + 0.45 * Math.sin(time * s.sp + s.ph);
+          ctx.globalAlpha = s.a * tw;
+          ctx.beginPath();
+          ctx.arc(sx, sy, s.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
       dispose() {
         this.state.running = false;
         cancelAnimationFrame(this.raf);
@@ -1291,6 +1350,31 @@ window.__ModuleLoader__.load({
         this.hideDetail();
       }
     };
+    var THEME_BG_DARK = "#0d1326";
+    var THEME_BG_LIGHT = "#e9eef8";
+    var DEFAULT_SETTINGS = { bgColor: "auto", bgOpacity: 1, hasImage: false };
+    async function fetchSettings() {
+      try {
+        const res = await fetch("/dsh-plugin-constellation/settings", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } catch {
+        return { ...DEFAULT_SETTINGS };
+      }
+    }
+    async function saveSettingsPartial(patch) {
+      const res = await fetch("/dsh-plugin-constellation/settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    }
+    function effectiveBgColor(s, isDark) {
+      if (s.bgColor === "auto") return isDark ? THEME_BG_DARK : THEME_BG_LIGHT;
+      return s.bgColor;
+    }
     function useIsDark() {
       const [dark, setDark] = import_react.default.useState(
         typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
@@ -1337,6 +1421,7 @@ window.__ModuleLoader__.load({
         if (!hostRef.current || !dataRef.current) return;
         const engine2 = new ConstellationCanvas(hostRef.current, dataRef.current);
         engineRef.current = engine2;
+        engine2.setTransparent(true);
         engine2.setDark(document.body.hasAttribute("data-ds-dark-theme"));
         setCats(engine2.getCategories().map((c) => ({ ...c, hidden: engine2.isCategoryHidden(c.name) })));
         return () => {
@@ -1528,8 +1613,10 @@ window.__ModuleLoader__.load({
     function FooterGraphButton(_props) {
       const [open, setOpen] = import_react.default.useState(false);
       const isDark = useIsDark();
+      const [settings, setSettings] = import_react.default.useState({ ...DEFAULT_SETTINGS });
       import_react.default.useEffect(() => {
         if (!open) return;
+        fetchSettings().then(setSettings);
         const onKey = (e) => {
           if (e.key === "Escape") setOpen(false);
         };
@@ -1559,7 +1646,7 @@ window.__ModuleLoader__.load({
             position: "fixed",
             inset: 0,
             zIndex: 1e4,
-            background: isDark ? "rgba(0,0,0,0.5)" : "rgba(80,80,90,0.32)",
+            background: isDark ? "rgba(0,0,0,0.42)" : "rgba(80,80,90,0.22)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center"
@@ -1576,16 +1663,226 @@ window.__ModuleLoader__.load({
               height: "min(880px, 88vh)",
               borderRadius: 16,
               overflow: "hidden",
-              background: isDark ? "#14141a" : "#ffffff",
               boxShadow: "0 32px 90px rgba(0,0,0,0.38)",
               display: "flex",
-              flexDirection: "column"
+              flexDirection: "column",
+              position: "relative",
+              isolation: "isolate"
             }
           },
+          // background layer: user color/image, faded by bgOpacity
+          import_react.default.createElement("div", {
+            style: {
+              position: "absolute",
+              inset: 0,
+              zIndex: -1,
+              backgroundColor: effectiveBgColor(settings, isDark),
+              backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : void 0,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              opacity: settings.bgOpacity
+            }
+          }),
           import_react.default.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose: () => setOpen(false) })
         )
       );
       return [button, (0, import_react_dom.createPortal)(modal, document.body)];
+    }
+    function SettingsSection({ t }) {
+      const isDark = useIsDark();
+      const [settings, setSettings] = import_react.default.useState({ ...DEFAULT_SETTINGS });
+      const [loaded, setLoaded] = import_react.default.useState(false);
+      const [error, setError] = import_react.default.useState(null);
+      import_react.default.useEffect(() => {
+        fetchSettings().then((s) => {
+          setSettings(s);
+          setLoaded(true);
+        });
+      }, []);
+      const patch = import_react.default.useCallback(async (p) => {
+        try {
+          const next = await saveSettingsPartial(p);
+          setSettings(next);
+          setError(null);
+        } catch (e) {
+          setError(String(e.message || e));
+        }
+      }, []);
+      const onPickImage = (file) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === "string") void patch({ bgImage: reader.result });
+        };
+        reader.readAsDataURL(file);
+      };
+      if (!loaded) {
+        return import_react.default.createElement("div", {
+          style: { padding: 40, color: "var(--dsw-alias-fg-muted, #8e8e93)", fontSize: 13 }
+        }, "\u52A0\u8F7D\u4E2D\u2026");
+      }
+      const labelStyle = {
+        fontSize: 12,
+        fontWeight: 600,
+        color: isDark ? "#e4e4e7" : "#1d1d1f",
+        marginBottom: 8
+      };
+      const hintStyle = {
+        fontSize: 11,
+        color: isDark ? "#8e8e93" : "#8e8e93",
+        lineHeight: 1.6,
+        marginTop: 6
+      };
+      const cardStyle = {
+        background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)",
+        border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"}`,
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 14
+      };
+      const inputColor = isDark ? "#e4e4e7" : "#1d1d1f";
+      const btnStyle = {
+        border: `1px solid ${isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.1)"}`,
+        background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.03)",
+        color: inputColor,
+        borderRadius: 8,
+        padding: "5px 12px",
+        fontSize: 12,
+        cursor: "pointer"
+      };
+      const effColor = effectiveBgColor(settings, isDark);
+      const checkerboard = "repeating-conic-gradient(rgba(128,128,128,0.22) 0% 25%, transparent 0% 50%) 50% / 16px 16px";
+      return import_react.default.createElement(
+        "div",
+        { style: { padding: "20px 24px", maxWidth: 640, overflowY: "auto" } },
+        import_react.default.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: inputColor, marginBottom: 4 } }, t("nav.label")),
+        import_react.default.createElement("div", { style: { ...hintStyle, marginTop: 0, marginBottom: 16 } }, t("settings.hint")),
+        // background color
+        import_react.default.createElement(
+          "div",
+          { style: cardStyle },
+          import_react.default.createElement("div", { style: labelStyle }, t("settings.bgColor")),
+          import_react.default.createElement(
+            "div",
+            { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+            import_react.default.createElement("input", {
+              type: "color",
+              value: settings.bgColor === "auto" ? effColor : settings.bgColor,
+              onChange: (e) => void patch({ bgColor: e.target.value }),
+              style: { width: 42, height: 30, border: "none", background: "transparent", cursor: "pointer", padding: 0 }
+            }),
+            import_react.default.createElement("span", {
+              style: { fontFamily: "monospace", fontSize: 12, color: isDark ? "#a8a8b0" : "#6e6e73", minWidth: 72 }
+            }, settings.bgColor === "auto" ? t("settings.bgAuto") : settings.bgColor.toUpperCase()),
+            import_react.default.createElement("button", {
+              style: { ...btnStyle, ...settings.bgColor === "auto" ? { borderColor: "#5ac8fa", color: "#5ac8fa" } : {} },
+              onClick: () => void patch({ bgColor: "auto" })
+            }, t("settings.bgAuto"))
+          ),
+          import_react.default.createElement("div", { style: hintStyle }, `${t("settings.bgAuto")}: ${THEME_BG_DARK} / ${THEME_BG_LIGHT}`)
+        ),
+        // background image
+        import_react.default.createElement(
+          "div",
+          { style: cardStyle },
+          import_react.default.createElement("div", { style: labelStyle }, t("settings.bgImage")),
+          import_react.default.createElement(
+            "div",
+            { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+            import_react.default.createElement(
+              "label",
+              { style: btnStyle },
+              t("settings.bgImagePick"),
+              import_react.default.createElement("input", {
+                type: "file",
+                accept: "image/*",
+                style: { display: "none" },
+                onChange: (e) => {
+                  onPickImage(e.target.files?.[0]);
+                  e.target.value = "";
+                }
+              })
+            ),
+            settings.hasImage ? import_react.default.createElement("button", {
+              style: { ...btnStyle, color: "#ff453a", borderColor: "rgba(255,69,58,0.4)" },
+              onClick: () => void patch({ bgImage: null })
+            }, t("settings.bgImageClear")) : null,
+            settings.hasImage ? import_react.default.createElement("span", {
+              style: { fontSize: 11, color: "#34c759" }
+            }, "\u2713") : null
+          ),
+          import_react.default.createElement("div", { style: hintStyle }, t("settings.bgImageHint"))
+        ),
+        // background opacity
+        import_react.default.createElement(
+          "div",
+          { style: cardStyle },
+          import_react.default.createElement(
+            "div",
+            { style: labelStyle },
+            `${t("settings.bgOpacity")} \xB7 ${Math.round(settings.bgOpacity * 100)}%`
+          ),
+          import_react.default.createElement("input", {
+            type: "range",
+            min: 0,
+            max: 100,
+            step: 5,
+            value: Math.round(settings.bgOpacity * 100),
+            onChange: (e) => {
+              const v = Number(e.target.value) / 100;
+              setSettings((prev) => ({ ...prev, bgOpacity: v }));
+            },
+            onMouseUp: (e) => {
+              void patch({ bgOpacity: Number(e.target.value) / 100 });
+            },
+            onTouchEnd: (e) => {
+              void patch({ bgOpacity: Number(e.target.value) / 100 });
+            },
+            style: { width: "100%", accentColor: "#5ac8fa" }
+          }),
+          import_react.default.createElement("div", { style: hintStyle }, t("settings.bgOpacityHint"))
+        ),
+        // preview: checkerboard behind the color/image layer at the set opacity
+        import_react.default.createElement(
+          "div",
+          { style: cardStyle },
+          import_react.default.createElement("div", { style: labelStyle }, t("settings.preview")),
+          import_react.default.createElement(
+            "div",
+            {
+              style: {
+                height: 110,
+                borderRadius: 10,
+                overflow: "hidden",
+                background: checkerboard,
+                position: "relative"
+              }
+            },
+            import_react.default.createElement("div", {
+              style: {
+                position: "absolute",
+                inset: 0,
+                backgroundColor: effColor,
+                backgroundImage: settings.hasImage ? "url(/dsh-plugin-constellation/bg)" : void 0,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                opacity: settings.bgOpacity
+              }
+            }),
+            import_react.default.createElement("div", {
+              style: {
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 26
+              }
+            }, "\u{1FA90}\u2728")
+          )
+        ),
+        error ? import_react.default.createElement("div", { style: { color: "#ff453a", fontSize: 12, marginTop: 4 } }, `\u4FDD\u5B58\u5931\u8D25: ${error}`) : null
+      );
     }
     var applyCtxRef = null;
     var inject = ["slots", "locale"];
@@ -1603,7 +1900,7 @@ window.__ModuleLoader__.load({
           label: () => t("nav.label"),
           locale: NS,
           inject: () => ({})
-        }, () => import_react.default.createElement(GraphSection, { t, ctx }))
+        }, () => import_react.default.createElement(SettingsSection, { t }))
       );
       try {
         ctx.slots.inject(

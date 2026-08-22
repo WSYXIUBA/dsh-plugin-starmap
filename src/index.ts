@@ -18,7 +18,7 @@
  * NOTE: no default export — the Cordis loader unwraps `exports.default ?? exports`
  * and would drop named exports if a default were present.
  */
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const name = "dsh-plugin-constellation";
@@ -348,12 +348,80 @@ function cacheKey(profilesRoot: string): string {
   return parts.join("|");
 }
 
-/* ── apply: mount the HTTP route ── */
+/* ── plugin settings (persisted under ~/.dsh/dsh-plugin-constellation) ── */
+interface PluginSettings {
+  /** "auto" (follow theme) or a #rrggbb color */
+  bgColor: string;
+  /** 0–1, 0 = fully transparent modal background */
+  bgOpacity: number;
+  /** mime type of the stored background image, null when none */
+  imageMime: string | null;
+}
+
+function settingsDir(): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  return join(home, ".dsh", "dsh-plugin-constellation");
+}
+
+function loadSettings(): PluginSettings {
+  try {
+    const s = JSON.parse(readFileSync(join(settingsDir(), "settings.json"), "utf-8"));
+    return {
+      bgColor: s.bgColor === "auto" || /^#[0-9a-fA-F]{6}$/.test(s.bgColor) ? s.bgColor : "auto",
+      bgOpacity: typeof s.bgOpacity === "number" ? Math.max(0, Math.min(1, s.bgOpacity)) : 1,
+      imageMime: typeof s.imageMime === "string" ? s.imageMime : null,
+    };
+  } catch {
+    return { bgColor: "auto", bgOpacity: 1, imageMime: null };
+  }
+}
+
+function saveSettings(s: PluginSettings): void {
+  mkdirSync(settingsDir(), { recursive: true });
+  writeFileSync(join(settingsDir(), "settings.json"), JSON.stringify(s, null, 2));
+}
+
+function settingsView(): { bgColor: string; bgOpacity: number; hasImage: boolean } {
+  const s = loadSettings();
+  return { bgColor: s.bgColor, bgOpacity: s.bgOpacity, hasImage: s.imageMime !== null && existsSync(join(settingsDir(), "bg-image.bin")) };
+}
+
+function readBody(request: any, limit = 12 * 1024 * 1024): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error("body too large"));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => resolve(Buffer.concat(chunks)));
+    request.on("error", reject);
+  });
+}
+
+const DATA_URL_RE = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/;
+
+/* ── apply: mount the HTTP routes ── */
 export function apply(ctx: any): void {
   ctx.inject(["webServer", "loader", "pluginInventory"], (hostCtx: any) => {
     hostCtx.effect(
       () => {
-        const dispose = hostCtx.webServer.register({
+        const json = (response: any, status: number, body: unknown) => {
+          response.writeHead(status, {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+          });
+          response.end(typeof body === "string" ? body : JSON.stringify(body));
+        };
+
+        const disposers: Array<() => void> = [];
+
+        disposers.push(hostCtx.webServer.register({
           kind: "exact",
           path: "/dsh-plugin-constellation/graph",
           handler: (request: any, response: any) => {
@@ -367,31 +435,94 @@ export function apply(ctx: any): void {
               const root = findProfilesRoot();
               const key = root ? cacheKey(root) : "none";
               if (!force && graphCache && graphCache.key === key) {
-                const body = JSON.stringify(graphCache.data);
-                response.writeHead(200, {
-                  "content-type": "application/json; charset=utf-8",
-                  "cache-control": "no-store",
-                });
-                response.end(body);
+                json(response, 200, graphCache.data);
                 return;
               }
               const data = buildGraph(hostCtx);
               graphCache = { key, data };
-              const body = JSON.stringify(data);
-              response.writeHead(200, {
-                "content-type": "application/json; charset=utf-8",
-                "cache-control": "no-store",
-              });
-              response.end(body);
+              json(response, 200, data);
             } catch (err) {
-              response.writeHead(500, { "content-type": "application/json" });
-              response.end(JSON.stringify({ error: String(err) }));
+              json(response, 500, { error: String(err) });
             }
           },
-        });
-        return () => dispose?.();
+        }));
+
+        // GET current settings / POST partial updates {bgColor?, bgOpacity?, bgImage?}
+        disposers.push(hostCtx.webServer.register({
+          kind: "exact",
+          path: "/dsh-plugin-constellation/settings",
+          handler: async (request: any, response: any) => {
+            try {
+              if (request.method === "GET") {
+                json(response, 200, settingsView());
+                return;
+              }
+              if (request.method !== "POST") {
+                response.writeHead(405, { allow: "GET, POST" });
+                response.end();
+                return;
+              }
+              const body = JSON.parse((await readBody(request)).toString("utf-8"));
+              const s = loadSettings();
+              if (body.bgColor !== undefined) {
+                if (body.bgColor === "auto" || /^#[0-9a-fA-F]{6}$/.test(body.bgColor)) s.bgColor = body.bgColor;
+              }
+              if (typeof body.bgOpacity === "number") s.bgOpacity = Math.max(0, Math.min(1, body.bgOpacity));
+              if (body.bgImage !== undefined) {
+                if (body.bgImage === null) {
+                  s.imageMime = null;
+                } else if (typeof body.bgImage === "string") {
+                  const match = DATA_URL_RE.exec(body.bgImage);
+                  if (!match) throw new Error("invalid image data URL");
+                  mkdirSync(settingsDir(), { recursive: true });
+                  writeFileSync(join(settingsDir(), "bg-image.bin"), Buffer.from(match[2], "base64"));
+                  s.imageMime = match[1];
+                }
+              }
+              saveSettings(s);
+              json(response, 200, settingsView());
+            } catch (err) {
+              json(response, 500, { error: String(err) });
+            }
+          },
+        }));
+
+        // background image binary
+        disposers.push(hostCtx.webServer.register({
+          kind: "exact",
+          path: "/dsh-plugin-constellation/bg",
+          handler: (request: any, response: any) => {
+            if (request.method !== "GET") {
+              response.writeHead(405, { allow: "GET" });
+              response.end();
+              return;
+            }
+            try {
+              const s = loadSettings();
+              const file = join(settingsDir(), "bg-image.bin");
+              if (!s.imageMime || !existsSync(file)) {
+                response.writeHead(404, { "content-type": "application/json" });
+                response.end(JSON.stringify({ error: "no background image" }));
+                return;
+              }
+              response.writeHead(200, {
+                "content-type": s.imageMime,
+                "cache-control": "no-store",
+              });
+              response.end(readFileSync(file));
+            } catch (err) {
+              json(response, 500, { error: String(err) });
+            }
+          },
+        }));
+
+        return () => {
+          for (const dispose of disposers) {
+            try { dispose?.(); } catch { /* ignore */ }
+          }
+        };
       },
-      "dsh-plugin-constellation: http route"
+      "dsh-plugin-constellation: http routes"
     );
   });
 }
