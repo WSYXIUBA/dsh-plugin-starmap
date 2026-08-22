@@ -1363,7 +1363,13 @@ window.__ModuleLoader__.load({
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const ct = res.headers.get("content-type") || "";
         if (!ct.includes("application/json")) return { ...DEFAULT_SETTINGS };
-        return await res.json();
+        const d = await res.json();
+        return {
+          bgColor: typeof d.bgColor === "string" ? d.bgColor : "auto",
+          bgOpacity: typeof d.bgOpacity === "number" ? d.bgOpacity : 1,
+          blur: typeof d.blur === "number" ? d.blur : 12,
+          hasImage: d.hasImage === true
+        };
       } catch {
         return { ...DEFAULT_SETTINGS };
       }
@@ -1631,6 +1637,19 @@ window.__ModuleLoader__.load({
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
       }, [open]);
+      import_react.default.useEffect(() => {
+        if (!open || settings.blur <= 0) return;
+        const touched = [];
+        for (const child of Array.from(document.body.children)) {
+          if (child instanceof HTMLElement && !child.hasAttribute("data-dshpg-overlay")) {
+            touched.push({ el: child, prev: child.style.filter });
+            child.style.filter = `blur(${settings.blur}px)`;
+          }
+        }
+        return () => {
+          for (const t of touched) t.el.style.filter = t.prev;
+        };
+      }, [open, settings.blur]);
       const button = import_react.default.createElement("button", {
         title: "\u63D2\u4EF6\u661F\u5EA7\u56FE",
         onClick: () => setOpen(true),
@@ -1647,22 +1666,24 @@ window.__ModuleLoader__.load({
       }, "\u{1FA90}");
       if (!open || typeof document === "undefined") return button;
       const ref = applyCtxRef || { t: (k) => zh[k], ctx: null };
+      const overlayProps = {
+        "data-dshpg-overlay": "1",
+        style: {
+          position: "fixed",
+          inset: 0,
+          zIndex: 1e4,
+          background: isDark ? "rgba(0,0,0,0.42)" : "rgba(80,80,90,0.22)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        },
+        onMouseDown: (e) => {
+          if (e.target === e.currentTarget) setOpen(false);
+        }
+      };
       const modal = import_react.default.createElement(
         "div",
-        {
-          style: {
-            position: "fixed",
-            inset: 0,
-            zIndex: 1e4,
-            background: isDark ? "rgba(0,0,0,0.42)" : "rgba(80,80,90,0.22)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center"
-          },
-          onMouseDown: (e) => {
-            if (e.target === e.currentTarget) setOpen(false);
-          }
-        },
+        overlayProps,
         import_react.default.createElement(
           "div",
           {

@@ -1397,7 +1397,13 @@ async function fetchSettings(): Promise<ConstellationSettings> {
     // answer index.html — treat that as "defaults until restart".
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json")) return { ...DEFAULT_SETTINGS };
-    return await res.json() as ConstellationSettings;
+    const d = await res.json() as Partial<ConstellationSettings>;
+    return {
+      bgColor: typeof d.bgColor === "string" ? d.bgColor : "auto",
+      bgOpacity: typeof d.bgOpacity === "number" ? d.bgOpacity : 1,
+      blur: typeof d.blur === "number" ? d.blur : 12,
+      hasImage: d.hasImage === true,
+    };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -1689,6 +1695,23 @@ function FooterGraphButton(_props: unknown) {
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // Primary blur mechanism: directly filter-blur every body child except our
+  // own overlay. Some Chromium/Electron compositing paths silently no-op
+  // backdrop-filter for portaled layers, so we don't rely on it alone.
+  React.useEffect(() => {
+    if (!open || settings.blur <= 0) return;
+    const touched: Array<{ el: HTMLElement; prev: string }> = [];
+    for (const child of Array.from(document.body.children)) {
+      if (child instanceof HTMLElement && !child.hasAttribute("data-dshpg-overlay")) {
+        touched.push({ el: child, prev: child.style.filter });
+        child.style.filter = `blur(${settings.blur}px)`;
+      }
+    }
+    return () => {
+      for (const t of touched) t.el.style.filter = t.prev;
+    };
+  }, [open, settings.blur]);
+
   const button = React.createElement("button", {
     title: "插件星座图",
     onClick: () => setOpen(true),
@@ -1702,18 +1725,20 @@ function FooterGraphButton(_props: unknown) {
   if (!open || typeof document === "undefined") return button;
 
   const ref = applyCtxRef || { t: (k: GraphKey) => zh[k], ctx: null };
+  const overlayProps: any = {
+    "data-dshpg-overlay": "1",
+    style: {
+      position: "fixed", inset: 0, zIndex: 10000,
+      background: isDark ? "rgba(0,0,0,0.42)" : "rgba(80,80,90,0.22)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    },
+    onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => {
+      if (e.target === e.currentTarget) setOpen(false);
+    },
+  };
   const modal = React.createElement(
     "div",
-    {
-      style: {
-        position: "fixed", inset: 0, zIndex: 10000,
-        background: isDark ? "rgba(0,0,0,0.42)" : "rgba(80,80,90,0.22)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      },
-      onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => {
-        if (e.target === e.currentTarget) setOpen(false);
-      },
-    },
+    overlayProps,
     React.createElement(
       "div",
       {
