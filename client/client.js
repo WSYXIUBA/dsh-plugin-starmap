@@ -43,6 +43,7 @@ window.__ModuleLoader__.load({
     });
     module.exports = __toCommonJS(index_exports);
     var import_react = __toESM(require("react"), 1);
+    var import_react_dom = require("react-dom");
     var zh = {
       "nav.label": "\u63D2\u4EF6\u661F\u5EA7\u56FE",
       "overlay.title": "\u63D2\u4EF6\u5173\u7CFB\u661F\u5EA7\u56FE",
@@ -313,7 +314,7 @@ window.__ModuleLoader__.load({
         }
         this.forcePos = pos;
       }
-      setLayout(mode) {
+      setLayout(mode, refit = false) {
         this.layoutMode = mode;
         const src = mode === "ring" ? this.ringPos : this.forcePos;
         for (let i = 0; i < this.prepared.length; i++) {
@@ -323,8 +324,10 @@ window.__ModuleLoader__.load({
             this.prepared[i].ty = p.y;
           }
         }
-        this.state.interacted = false;
-        this.fitView();
+        if (refit) {
+          this.state.interacted = false;
+          this.fitView();
+        }
       }
       getLayout() {
         return this.layoutMode;
@@ -1190,7 +1193,7 @@ window.__ModuleLoader__.load({
         this.searchActive = -1;
         this.hideDetail();
         this.buildIndex();
-        this.setLayout(this.layoutMode);
+        this.setLayout(this.layoutMode, false);
       }
       /* ── exports ── */
       exportPNG() {
@@ -1288,12 +1291,22 @@ window.__ModuleLoader__.load({
         this.hideDetail();
       }
     };
+    function useIsDark() {
+      const [dark, setDark] = import_react.default.useState(
+        typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
+      );
+      import_react.default.useEffect(() => {
+        const obs = new MutationObserver(() => setDark(document.body.hasAttribute("data-ds-dark-theme")));
+        obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+        return () => obs.disconnect();
+      }, []);
+      return dark;
+    }
     function GraphSection({ t, ctx, onClose }) {
       const hostRef = import_react.default.useRef(null);
       const engineRef = import_react.default.useRef(null);
-      const [isDark, setIsDark] = import_react.default.useState(
-        typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
-      );
+      const dataRef = import_react.default.useRef(null);
+      const isDark = useIsDark();
       const [data, setData] = import_react.default.useState(null);
       const [error, setError] = import_react.default.useState(null);
       const [searchQuery, setSearchQuery] = import_react.default.useState("");
@@ -1312,37 +1325,37 @@ window.__ModuleLoader__.load({
           return d;
         }).catch((e) => {
           setError(e.message);
+          return void 0;
         });
       }, []);
       import_react.default.useEffect(() => {
         fetchGraph();
       }, [fetchGraph]);
+      const hasData = data !== null;
       import_react.default.useEffect(() => {
-        if (!hostRef.current || !data) return;
-        let engine2 = engineRef.current;
-        if (!engine2) {
-          engine2 = new ConstellationCanvas(hostRef.current, data);
-          engineRef.current = engine2;
-          engine2.setDark(isDark);
-        } else {
-          engine2.updateData(data);
-        }
-        const engineRefLocal = engine2;
-        setCats(engine2.getCategories().map((c) => ({ ...c, hidden: engineRefLocal.isCategoryHidden(c.name) })));
-        const obs = new MutationObserver(() => {
-          const dark = document.body.hasAttribute("data-ds-dark-theme");
-          setIsDark(dark);
-          engineRefLocal.setDark(dark);
-        });
-        obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+        if (!hostRef.current || !dataRef.current) return;
+        const engine2 = new ConstellationCanvas(hostRef.current, dataRef.current);
+        engineRef.current = engine2;
+        engine2.setDark(document.body.hasAttribute("data-ds-dark-theme"));
+        setCats(engine2.getCategories().map((c) => ({ ...c, hidden: engine2.isCategoryHidden(c.name) })));
         return () => {
-          obs.disconnect();
-          engineRefLocal.dispose();
+          engine2.dispose();
           engineRef.current = null;
         };
-      }, [data?.nodes.length, data?.scannedAt]);
+      }, [hasData]);
+      import_react.default.useEffect(() => {
+        engineRef.current?.setDark(isDark);
+      }, [isDark]);
       import_react.default.useEffect(() => {
         if (!data) return;
+        dataRef.current = data;
+        const engine2 = engineRef.current;
+        if (!engine2) return;
+        engine2.updateData(data);
+        setCats(engine2.getCategories().map((c) => ({ ...c, hidden: engine2.isCategoryHidden(c.name) })));
+      }, [data]);
+      import_react.default.useEffect(() => {
+        if (!hasData) return;
         const tick = async () => {
           if (document.visibilityState !== "visible") return;
           const engine2 = engineRef.current;
@@ -1358,14 +1371,12 @@ window.__ModuleLoader__.load({
             }
             throw new Error("remote unavailable");
           } catch {
-            fetchGraph().then((d) => {
-              if (d) engine2.updateData(d);
-            });
+            fetchGraph();
           }
         };
         const timer = window.setInterval(tick, 5e3);
         return () => window.clearInterval(timer);
-      }, [data, ctx, fetchGraph]);
+      }, [hasData, ctx, fetchGraph]);
       if (error && !data) {
         return import_react.default.createElement("div", {
           style: { padding: 40, color: "#d70015", fontSize: 13 }
@@ -1440,14 +1451,12 @@ window.__ModuleLoader__.load({
             onClick: () => {
               const next = layout === "ring" ? "force" : "ring";
               setLayout(next);
-              engine?.setLayout(next);
+              engine?.setLayout(next, true);
             }
           }, layout === "ring" ? t("layout.force") : t("layout.ring")),
           import_react.default.createElement("button", { style: btnStyle, onClick: () => engine?.exportPNG() }, t("export.png")),
           import_react.default.createElement("button", { style: btnStyle, onClick: () => engine?.exportJSON() }, t("export.json")),
-          import_react.default.createElement("button", { style: btnStyle, onClick: () => fetchGraph(true).then((d) => {
-            if (d && engine) engine.updateData(d);
-          }) }, t("action.refresh")),
+          import_react.default.createElement("button", { style: btnStyle, onClick: () => fetchGraph(true) }, t("action.refresh")),
           onClose ? import_react.default.createElement("button", {
             style: { ...btnStyle, borderColor: "rgba(255,69,58,0.4)", color: "#ff453a" },
             onClick: onClose
@@ -1515,65 +1524,69 @@ window.__ModuleLoader__.load({
         error ? import_react.default.createElement("div", { style: { position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", fontSize: 11, color: "#ff9f0a" } }, `\u72B6\u6001\u5237\u65B0\u5931\u8D25: ${error}`) : null
       );
     }
-    function useIsDark() {
-      const [dark, setDark] = import_react.default.useState(
-        typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
-      );
-      import_react.default.useEffect(() => {
-        const obs = new MutationObserver(() => setDark(document.body.hasAttribute("data-ds-dark-theme")));
-        obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
-        return () => obs.disconnect();
-      }, []);
-      return dark;
-    }
     function FooterGraphButton(_props) {
       const [open, setOpen] = import_react.default.useState(false);
       const isDark = useIsDark();
-      if (!open) {
-        return import_react.default.createElement("button", {
-          title: "\u63D2\u4EF6\u661F\u5EA7\u56FE",
-          onClick: () => setOpen(true),
-          style: {
-            width: 30,
-            height: 30,
-            borderRadius: 8,
-            cursor: "pointer",
-            fontSize: 15,
-            lineHeight: 1,
-            border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
-            background: "transparent"
-          }
-        }, "\u{1FA90}");
-      }
-      return import_react.default.createElement(
+      import_react.default.useEffect(() => {
+        if (!open) return;
+        const onKey = (e) => {
+          if (e.key === "Escape") setOpen(false);
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+      }, [open]);
+      const button = import_react.default.createElement("button", {
+        title: "\u63D2\u4EF6\u661F\u5EA7\u56FE",
+        onClick: () => setOpen(true),
+        style: {
+          width: 30,
+          height: 30,
+          borderRadius: 8,
+          cursor: "pointer",
+          fontSize: 15,
+          lineHeight: 1,
+          border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
+          background: "transparent"
+        }
+      }, "\u{1FA90}");
+      if (!open || typeof document === "undefined") return button;
+      const ref = applyCtxRef || { t: (k) => zh[k], ctx: null };
+      const modal = import_react.default.createElement(
         "div",
         {
           style: {
             position: "fixed",
             inset: 0,
-            zIndex: 9e3,
-            background: isDark ? "rgba(10,10,14,0.82)" : "rgba(240,240,245,0.85)",
-            backdropFilter: "blur(14px)",
+            zIndex: 1e4,
+            background: isDark ? "rgba(0,0,0,0.5)" : "rgba(80,80,90,0.32)",
             display: "flex",
-            flexDirection: "column",
-            padding: "24px 28px"
+            alignItems: "center",
+            justifyContent: "center"
           },
-          onClick: (e) => {
+          onMouseDown: (e) => {
             if (e.target === e.currentTarget) setOpen(false);
           }
         },
         import_react.default.createElement(
           "div",
-          { style: { flex: 1, minHeight: 0, position: "relative", borderRadius: 14, overflow: "hidden", boxShadow: "0 24px 80px rgba(0,0,0,0.28)", background: isDark ? "#0f0f14" : "#fff" } },
-          import_react.default.createElement(GraphSectionStub, { onClose: () => setOpen(false) })
+          {
+            style: {
+              width: "min(1400px, 92vw)",
+              height: "min(880px, 88vh)",
+              borderRadius: 16,
+              overflow: "hidden",
+              background: isDark ? "#14141a" : "#ffffff",
+              boxShadow: "0 32px 90px rgba(0,0,0,0.38)",
+              display: "flex",
+              flexDirection: "column"
+            }
+          },
+          import_react.default.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose: () => setOpen(false) })
         )
       );
+      return [button, (0, import_react_dom.createPortal)(modal, document.body)];
     }
     var applyCtxRef = null;
-    function GraphSectionStub({ onClose }) {
-      const ref = applyCtxRef || { t: (k) => zh[k], ctx: null };
-      return import_react.default.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose });
-    }
     var inject = ["slots", "locale"];
     function apply(ctx) {
       const NS = "dsh-plugin-constellation";

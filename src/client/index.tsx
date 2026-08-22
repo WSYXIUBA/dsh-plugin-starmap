@@ -291,15 +291,19 @@ class ConstellationCanvas {
     this.forcePos = pos;
   }
 
-  setLayout(mode: "ring" | "force") {
+  setLayout(mode: "ring" | "force", refit = false) {
     this.layoutMode = mode;
     const src = mode === "ring" ? this.ringPos : this.forcePos;
     for (let i = 0; i < this.prepared.length; i++) {
       const p = src.get(i);
       if (p) { this.prepared[i].tx = p.x; this.prepared[i].ty = p.y; }
     }
-    this.state.interacted = false;
-    this.fitView();
+    // Only an explicit user layout switch refits the camera; data refreshes
+    // must keep the user's pan/zoom exactly where they left it.
+    if (refit) {
+      this.state.interacted = false;
+      this.fitView();
+    }
   }
 
   getLayout(): "ring" | "force" { return this.layoutMode; }
@@ -1188,7 +1192,7 @@ class ConstellationCanvas {
     this.searchActive = -1;
     this.hideDetail();
     this.buildIndex();
-    this.setLayout(this.layoutMode);
+    this.setLayout(this.layoutMode, false);
   }
 
   /* ── exports ── */
@@ -1295,15 +1299,28 @@ class ConstellationCanvas {
 
 /* ── React components ── */
 import React from "react";
+import { createPortal } from "react-dom";
+
+/* Reactive dark-theme flag (body attribute is the runtime's theme signal). */
+function useIsDark(): boolean {
+  const [dark, setDark] = React.useState(
+    typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
+  );
+  React.useEffect(() => {
+    const obs = new MutationObserver(() => setDark(document.body.hasAttribute("data-ds-dark-theme")));
+    obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+    return () => obs.disconnect();
+  }, []);
+  return dark;
+}
 
 /* Shared toolbar + graph surface. Used by the settings section and by the
-   fullscreen overlay launched from the sidebar footer action. */
+   modal window launched from the sidebar footer action. */
 function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: any; onClose?: () => void }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
   const engineRef = React.useRef<ConstellationCanvas | null>(null);
-  const [isDark, setIsDark] = React.useState(
-    typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
-  );
+  const dataRef = React.useRef<GraphData | null>(null);
+  const isDark = useIsDark();
   const [data, setData] = React.useState<GraphData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -1324,42 +1341,49 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
         setError(null);
         return d;
       })
-      .catch((e: Error) => { setError(e.message); });
+      .catch((e: Error) => { setError(e.message); return undefined; });
   }, []);
 
   React.useEffect(() => {
     fetchGraph();
   }, [fetchGraph]);
 
-  // engine lifecycle: rebuilt only when the node set changes (NOT on theme flip)
+  const hasData = data !== null;
+
+  // Engine lifecycle: created exactly once per mount (first data arrival).
+  // Teardown only on unmount — data/theme refreshes must NEVER rebuild the
+  // canvas or the user's pan/zoom would reset.
   React.useEffect(() => {
-    if (!hostRef.current || !data) return;
-    let engine = engineRef.current;
-    if (!engine) {
-      engine = new ConstellationCanvas(hostRef.current, data);
-      engineRef.current = engine;
-      engine.setDark(isDark);
-    } else {
-      engine.updateData(data);
-    }
-    const engineRefLocal = engine;
-    setCats(engine.getCategories().map((c) => ({ ...c, hidden: engineRefLocal.isCategoryHidden(c.name) })));
-    const obs = new MutationObserver(() => {
-      const dark = document.body.hasAttribute("data-ds-dark-theme");
-      setIsDark(dark);
-      engineRefLocal.setDark(dark);
-    });
-    obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+    if (!hostRef.current || !dataRef.current) return;
+    const engine = new ConstellationCanvas(hostRef.current, dataRef.current);
+    engineRef.current = engine;
+    engine.setDark(document.body.hasAttribute("data-ds-dark-theme"));
+    setCats(engine.getCategories().map((c) => ({ ...c, hidden: engine.isCategoryHidden(c.name) })));
     return () => {
-      obs.disconnect();
-      engineRefLocal.dispose();
+      engine.dispose();
       engineRef.current = null;
     };
-  }, [data?.nodes.length, data?.scannedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Theme flips push into the live engine; no rebuild.
+  React.useEffect(() => {
+    engineRef.current?.setDark(isDark);
+  }, [isDark]);
+
+  // Data refreshes merge into the live engine; view (pan/zoom/layout/hidden
+  // categories) is preserved. Only a changed node set rebuilds positions.
+  React.useEffect(() => {
+    if (!data) return;
+    dataRef.current = data;
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.updateData(data);
+    setCats(engine.getCategories().map((c) => ({ ...c, hidden: engine.isCategoryHidden(c.name) })));
+  }, [data]);
 
   // live status poll: prefer the typed remote, fall back to a plain HTTP refetch
   React.useEffect(() => {
-    if (!data) return;
+    if (!hasData) return;
     const tick = async () => {
       if (document.visibilityState !== "visible") return;
       const engine = engineRef.current;
@@ -1376,12 +1400,12 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
         throw new Error("remote unavailable");
       } catch {
         // remote not reachable → periodic full refetch (cheap: host cache)
-        fetchGraph().then((d) => { if (d) engine.updateData(d); });
+        fetchGraph();
       }
     };
     const timer = window.setInterval(tick, 5000);
     return () => window.clearInterval(timer);
-  }, [data, ctx, fetchGraph]);
+  }, [hasData, ctx, fetchGraph]);
 
   if (error && !data) {
     return React.createElement("div", {
@@ -1449,12 +1473,12 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
         style: btnStyle, onClick: () => {
           const next = layout === "ring" ? "force" : "ring";
           setLayout(next);
-          engine?.setLayout(next);
+          engine?.setLayout(next, true);
         },
       }, layout === "ring" ? t("layout.force") : t("layout.ring")),
       React.createElement("button", { style: btnStyle, onClick: () => engine?.exportPNG() }, t("export.png")),
       React.createElement("button", { style: btnStyle, onClick: () => engine?.exportJSON() }, t("export.json")),
-      React.createElement("button", { style: btnStyle, onClick: () => fetchGraph(true).then((d) => { if (d && engine) engine.updateData(d); }) }, t("action.refresh")),
+      React.createElement("button", { style: btnStyle, onClick: () => fetchGraph(true) }, t("action.refresh")),
       onClose ? React.createElement("button", {
         style: { ...btnStyle, borderColor: "rgba(255,69,58,0.4)", color: "#ff453a" },
         onClick: onClose,
@@ -1514,55 +1538,65 @@ function GraphSection({ t, ctx, onClose }: { t: (k: GraphKey) => string; ctx?: a
   );
 }
 
-/* Reactive dark-theme flag (body attribute is the runtime's theme signal). */
-function useIsDark(): boolean {
-  const [dark, setDark] = React.useState(
-    typeof document !== "undefined" && document.body.hasAttribute("data-ds-dark-theme")
-  );
-  React.useEffect(() => {
-    const obs = new MutationObserver(() => setDark(document.body.hasAttribute("data-ds-dark-theme")));
-    obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
-    return () => obs.disconnect();
-  }, []);
-  return dark;
-}
-
-/* Sidebar footer action: 🪐 button that opens the graph in a fullscreen overlay. */
+/* Sidebar footer action: 🪐 button that opens the graph as a centered modal
+   window. The modal is portaled to document.body — NOT rendered inside the
+   sidebar subtree — so theme effects that create stacking contexts on sidebar
+   containers (e.g. aqua mica mode transforms) cannot trap it in the rail. */
 function FooterGraphButton(_props: unknown) {
   const [open, setOpen] = React.useState(false);
   const isDark = useIsDark();
-  if (!open) {
-    return React.createElement("button", {
-      title: "插件星座图",
-      onClick: () => setOpen(true),
-      style: {
-        width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 15, lineHeight: 1,
-        border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
-        background: "transparent",
-      },
-    }, "🪐");
-  }
-  return React.createElement("div", {
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const button = React.createElement("button", {
+    title: "插件星座图",
+    onClick: () => setOpen(true),
     style: {
-      position: "fixed", inset: 0, zIndex: 9000,
-      background: isDark ? "rgba(10,10,14,0.82)" : "rgba(240,240,245,0.85)",
-      backdropFilter: "blur(14px)",
-      display: "flex", flexDirection: "column", padding: "24px 28px",
+      width: 30, height: 30, borderRadius: 8, cursor: "pointer", fontSize: 15, lineHeight: 1,
+      border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
+      background: "transparent",
     },
-    onClick: (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) setOpen(false);
+  }, "🪐");
+
+  if (!open || typeof document === "undefined") return button;
+
+  const ref = applyCtxRef || { t: (k: GraphKey) => zh[k], ctx: null };
+  const modal = React.createElement(
+    "div",
+    {
+      style: {
+        position: "fixed", inset: 0, zIndex: 10000,
+        background: isDark ? "rgba(0,0,0,0.5)" : "rgba(80,80,90,0.32)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      },
+      onMouseDown: (e: React.MouseEvent<HTMLDivElement>) => {
+        if (e.target === e.currentTarget) setOpen(false);
+      },
     },
-  },
-  React.createElement("div", { style: { flex: 1, minHeight: 0, position: "relative", borderRadius: 14, overflow: "hidden", boxShadow: "0 24px 80px rgba(0,0,0,0.28)", background: isDark ? "#0f0f14" : "#fff" } },
-    React.createElement(GraphSectionStub, { onClose: () => setOpen(false) })));
+    React.createElement(
+      "div",
+      {
+        style: {
+          width: "min(1400px, 92vw)", height: "min(880px, 88vh)",
+          borderRadius: 16, overflow: "hidden",
+          background: isDark ? "#14141a" : "#ffffff",
+          boxShadow: "0 32px 90px rgba(0,0,0,0.38)",
+          display: "flex", flexDirection: "column",
+        },
+      },
+      React.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose: () => setOpen(false) })
+    )
+  );
+  return [button, createPortal(modal, document.body)];
 }
 
-/* Bridge: pulls t/ctx from module scope registered by apply(). */
+/* Bridge for the modal: t/ctx registered by apply(). */
 let applyCtxRef: { t: (k: GraphKey) => string; ctx: any } | null = null;
-function GraphSectionStub({ onClose }: { onClose: () => void }) {
-  const ref = applyCtxRef || { t: (k: GraphKey) => zh[k], ctx: null };
-  return React.createElement(GraphSection, { t: ref.t, ctx: ref.ctx, onClose });
-}
 
 /* ── plugin entry ── */
 export const inject = ["slots", "locale"] as const;
