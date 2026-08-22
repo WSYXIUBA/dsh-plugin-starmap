@@ -1436,8 +1436,8 @@ window.__ModuleLoader__.load({
         this.hideDetail();
       }
     };
-    var THEME_BG_DARK = "#0d1326";
-    var THEME_BG_LIGHT = "#e9eef8";
+    var THEME_BG_DARK = "#1e1e22";
+    var THEME_BG_LIGHT = "#f0f0f2";
     var DEFAULT_SETTINGS = { bgColor: "auto", bgOpacity: 1, blur: 12, hasImage: false };
     async function fetchSettings() {
       try {

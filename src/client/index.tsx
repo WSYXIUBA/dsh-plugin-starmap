@@ -1469,8 +1469,8 @@ class ConstellationCanvas {
 
 /* Theme-following default background colors — deliberately not pure black or
    pure white: deep-space indigo for dark, misty pale blue for light. */
-const THEME_BG_DARK = "#0d1326";
-const THEME_BG_LIGHT = "#e9eef8";
+const THEME_BG_DARK = "#1e1e22";
+const THEME_BG_LIGHT = "#f0f0f2";
 
 export interface ConstellationSettings {
   bgColor: string; // "auto" | #rrggbb
